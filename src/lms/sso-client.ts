@@ -23,6 +23,8 @@ import type {
   SsoForm
 } from "./types.js";
 
+export type FormPayloadValue = string | number | boolean;
+
 function toDecodedResponse(response: Response<Buffer>): DecodedResponse {
   return {
     statusCode: response.statusCode,
@@ -141,6 +143,18 @@ export class MjuLmsSsoClient {
     });
 
     return toBinaryResponse(response);
+  }
+
+  async postForm(
+    url: string | URL,
+    form: Record<string, FormPayloadValue>
+  ): Promise<DecodedResponse> {
+    const response = await this.http.post(url.toString(), {
+      responseType: "buffer",
+      form
+    });
+
+    return toDecodedResponse(response);
   }
 
   async fetchMainPage(): Promise<DecodedResponse> {

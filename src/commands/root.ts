@@ -5,6 +5,7 @@ import { createAuthCommand } from "./auth.js";
 import { registerGlobalOptions, resolveGlobalOptions } from "./common.js";
 import { createConfigCommand } from "./config.js";
 import { createDoctorCommand } from "./doctor.js";
+import { createLmsCommand } from "./lms.js";
 import { createServiceCommands } from "./services.js";
 
 export function createRootCommand(): Command {
@@ -23,6 +24,7 @@ export function createRootCommand(): Command {
   program.addCommand(createAuthCommand(getGlobals));
   program.addCommand(createConfigCommand(getGlobals));
   program.addCommand(createDoctorCommand(getGlobals));
+  program.addCommand(createLmsCommand(getGlobals));
 
   for (const serviceCommand of createServiceCommands(getGlobals)) {
     program.addCommand(serviceCommand);

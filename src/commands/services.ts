@@ -5,7 +5,9 @@ import { SERVICES, type ServiceSpec } from "../services/registry.js";
 import type { GlobalOptions } from "../types.js";
 
 export function createServiceCommands(getGlobals: () => GlobalOptions): Command[] {
-  return SERVICES.map((service) => createServiceCommand(service, getGlobals));
+  return SERVICES
+    .filter((service) => service.name !== "lms")
+    .map((service) => createServiceCommand(service, getGlobals));
 }
 
 function createServiceCommand(
