@@ -4,6 +4,7 @@ import { AuthManager } from "../auth/auth-manager.js";
 import { printData } from "../output/print.js";
 import type { GlobalOptions } from "../types.js";
 import { resolveLmsRuntimeConfig } from "../lms/config.js";
+import { getCourseAssignment, listCourseAssignments } from "../lms/assignments.js";
 import { listRegularTakenCourses } from "../lms/courses.js";
 import { resolveCourseReference } from "../lms/course-resolver.js";
 import { getCourseMaterial, listCourseMaterials } from "../lms/materials.js";
@@ -51,10 +52,10 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
           implemented: {
             courses: ["list"],
             notices: ["list", "get"],
-            materials: ["list", "get"]
+            materials: ["list", "get"],
+            assignments: ["list", "get"]
           },
           planned: {
-            assignments: ["list", "get"],
             online: ["list", "get"],
             attachments: ["download", "download-bulk"]
           }
@@ -213,9 +214,64 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
       printData(result, globals.format);
     });
 
+  const assignments = new Command("assignments").description("Read LMS course assignments");
+
+  assignments
+    .command("list")
+    .description("List assignments for a course")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .option("--week <week>", "filter by lecture week")
+    .action(async (options: { course?: string; kjkey?: string; week?: string }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLmsClientWithCredentials(globals);
+      const resolvedCourse = await resolveCourseReference(client, credentials, {
+        course: options.course,
+        kjkey: options.kjkey
+      });
+      const week = parseOptionalInt(options.week, "week");
+      const result = await listCourseAssignments(client, {
+        userId: credentials.userId,
+        password: credentials.password,
+        kjkey: resolvedCourse.kjkey,
+        ...(week !== undefined ? { week } : {})
+      });
+
+      printData(result, globals.format);
+    });
+
+  assignments
+    .command("get")
+    .description("Get a specific assignment for a course")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--rt-seq <id>", "assignment rt_seq")
+    .action(async (options: { course?: string; kjkey?: string; rtSeq: string }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLmsClientWithCredentials(globals);
+      const resolvedCourse = await resolveCourseReference(client, credentials, {
+        course: options.course,
+        kjkey: options.kjkey
+      });
+      const rtSeq = parseOptionalInt(options.rtSeq, "rt-seq");
+      if (rtSeq === undefined) {
+        throw new Error("rt-seq 는 필수입니다.");
+      }
+
+      const result = await getCourseAssignment(client, {
+        userId: credentials.userId,
+        password: credentials.password,
+        kjkey: resolvedCourse.kjkey,
+        rtSeq
+      });
+
+      printData(result, globals.format);
+    });
+
   lms.addCommand(courses);
   lms.addCommand(notices);
   lms.addCommand(materials);
+  lms.addCommand(assignments);
 
   return lms;
 }
