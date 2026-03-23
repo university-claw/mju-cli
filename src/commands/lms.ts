@@ -9,6 +9,7 @@ import { listRegularTakenCourses } from "../lms/courses.js";
 import { resolveCourseReference } from "../lms/course-resolver.js";
 import {
   getActionItems,
+  getCourseDigest,
   getDueAssignments,
   getIncompleteOnlineWeeks,
   getUnreadNotices,
@@ -68,12 +69,12 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
               "+due-assignments",
               "+unread-notices",
               "+incomplete-online",
-              "+action-items"
+              "+action-items",
+              "+digest"
             ]
           },
           planned: {
-            attachments: ["download", "download-bulk"],
-            helpers: ["+digest"]
+            attachments: ["download", "download-bulk"]
           }
         },
         globals.format
@@ -437,6 +438,35 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
 
       printData(result, globals.format);
     });
+
+  lms
+    .command("+digest")
+    .description("Show a combined digest for one course")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .option("--days <days>", "due window in days")
+    .option("--limit <limit>", "max items per section")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        days?: string;
+        limit?: string;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createLmsClientWithCredentials(globals);
+        const days = parseOptionalInt(options.days, "days");
+        const limit = parseOptionalInt(options.limit, "limit");
+        const result = await getCourseDigest(client, credentials, {
+          ...(options.course ? { course: options.course } : {}),
+          ...(options.kjkey ? { kjkey: options.kjkey } : {}),
+          ...(days !== undefined ? { days } : {}),
+          ...(limit !== undefined ? { limit } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
 
   lms.addCommand(courses);
   lms.addCommand(notices);

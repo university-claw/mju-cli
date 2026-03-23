@@ -1,18 +1,21 @@
 import { getCourseAssignment, listCourseAssignments } from "./assignments.js";
 import { resolveCourseReference } from "./course-resolver.js";
 import { listRegularTakenCourses } from "./courses.js";
+import { listCourseMaterials } from "./materials.js";
 import { listCourseNotices } from "./notices.js";
 import { getCourseOnlineWeek, listCourseOnlineWeeks } from "./online.js";
 import type { MjuLmsSsoClient } from "./sso-client.js";
 import type {
   AssignmentSummary,
   CourseSummary,
+  MaterialSummary,
   NoticeSummary,
   OnlineWeekSummary
 } from "./types.js";
 import type { ResolvedLmsCredentials } from "../auth/types.js";
 
 const DEFAULT_DUE_DAYS = 7;
+const DEFAULT_DIGEST_LIMIT = 5;
 const NOTICE_PAGE_SIZE = 50;
 const MAX_NOTICE_PAGES = 20;
 
@@ -111,6 +114,29 @@ export interface ActionItemsResult {
   unsubmittedAssignments: AggregateAssignmentItem[];
   dueAssignments: DueAssignmentItem[];
   unreadNotices: AggregateNoticeItem[];
+  incompleteOnlineWeeks: AggregateOnlineWeekItem[];
+}
+
+export interface CourseDigestResult {
+  kjkey: string;
+  courseTitle?: string;
+  courseCode?: string;
+  year?: number;
+  term?: number;
+  termLabel?: string;
+  days: number;
+  limit: number;
+  counts: {
+    unreadNotices: number;
+    materials: number;
+    unsubmittedAssignments: number;
+    dueAssignments: number;
+    incompleteOnlineWeeks: number;
+  };
+  unreadNotices: AggregateNoticeItem[];
+  materials: MaterialSummary[];
+  unsubmittedAssignments: AggregateAssignmentItem[];
+  dueAssignments: DueAssignmentItem[];
   incompleteOnlineWeeks: AggregateOnlineWeekItem[];
 }
 
@@ -665,5 +691,89 @@ export async function getActionItems(
     dueAssignments,
     unreadNotices,
     incompleteOnlineWeeks
+  };
+}
+
+export async function getCourseDigest(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    course?: string;
+    kjkey?: string;
+    days?: number;
+    limit?: number;
+  }
+): Promise<CourseDigestResult> {
+  if (!options.course?.trim() && !options.kjkey?.trim()) {
+    throw new Error("+digest 는 --course 또는 --kjkey 가 필요합니다.");
+  }
+
+  const resolvedCourse = await resolveCourseReference(client, credentials, {
+    ...(options.course ? { course: options.course } : {}),
+    ...(options.kjkey ? { kjkey: options.kjkey } : {})
+  });
+  const scopedCourse: ScopedCourse = {
+    kjkey: resolvedCourse.kjkey,
+    ...(resolvedCourse.courseTitle ? { courseTitle: resolvedCourse.courseTitle } : {}),
+    ...(resolvedCourse.courseCode ? { courseCode: resolvedCourse.courseCode } : {}),
+    ...(resolvedCourse.year !== undefined ? { year: resolvedCourse.year } : {}),
+    ...(resolvedCourse.term !== undefined ? { term: resolvedCourse.term } : {}),
+    ...(resolvedCourse.termLabel ? { termLabel: resolvedCourse.termLabel } : {})
+  };
+  const digestDays = options.days ?? DEFAULT_DUE_DAYS;
+  const digestLimit = options.limit ?? DEFAULT_DIGEST_LIMIT;
+
+  const assignmentsResult = await listCourseAssignments(client, {
+    userId: credentials.userId,
+    password: credentials.password,
+    kjkey: scopedCourse.kjkey
+  });
+  const allUnreadNotices = await collectUnreadNotices(client, credentials, [scopedCourse]);
+  const materialsResult = await listCourseMaterials(client, {
+    userId: credentials.userId,
+    password: credentials.password,
+    kjkey: scopedCourse.kjkey
+  });
+  const dueAssignments = await collectDueAssignments(client, credentials, [scopedCourse], {
+    days: digestDays,
+    includeSubmitted: false
+  });
+  const incompleteOnlineWeeks = await collectIncompleteOnlineWeeks(client, credentials, [
+    scopedCourse
+  ]);
+  const unsubmittedAssignments = assignmentsResult.assignments
+    .filter((assignment) => assignment.isSubmitted === false)
+    .map((assignment) =>
+      toAggregateAssignment(scopedCourse, assignment, assignmentsResult.courseTitle)
+    );
+  const courseTitle =
+    assignmentsResult.courseTitle ??
+    materialsResult.courseTitle ??
+    allUnreadNotices[0]?.courseTitle ??
+    dueAssignments[0]?.courseTitle ??
+    incompleteOnlineWeeks[0]?.courseTitle ??
+    scopedCourse.courseTitle;
+
+  return {
+    kjkey: scopedCourse.kjkey,
+    ...(courseTitle ? { courseTitle } : {}),
+    ...(scopedCourse.courseCode ? { courseCode: scopedCourse.courseCode } : {}),
+    ...(scopedCourse.year !== undefined ? { year: scopedCourse.year } : {}),
+    ...(scopedCourse.term !== undefined ? { term: scopedCourse.term } : {}),
+    ...(scopedCourse.termLabel ? { termLabel: scopedCourse.termLabel } : {}),
+    days: digestDays,
+    limit: digestLimit,
+    counts: {
+      unreadNotices: allUnreadNotices.length,
+      materials: materialsResult.materials.length,
+      unsubmittedAssignments: unsubmittedAssignments.length,
+      dueAssignments: dueAssignments.length,
+      incompleteOnlineWeeks: incompleteOnlineWeeks.length
+    },
+    unreadNotices: allUnreadNotices.slice(0, digestLimit),
+    materials: materialsResult.materials.slice(0, digestLimit),
+    unsubmittedAssignments: unsubmittedAssignments.slice(0, digestLimit),
+    dueAssignments: dueAssignments.slice(0, digestLimit),
+    incompleteOnlineWeeks: incompleteOnlineWeeks.slice(0, digestLimit)
   };
 }
