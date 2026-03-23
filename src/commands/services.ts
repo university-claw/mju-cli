@@ -8,7 +8,10 @@ export function createServiceCommands(getGlobals: () => GlobalOptions): Command[
   return SERVICES
     .filter(
       (service) =>
-        service.name !== "lms" && service.name !== "msi" && service.name !== "ucheck"
+        service.name !== "lms" &&
+        service.name !== "msi" &&
+        service.name !== "ucheck" &&
+        service.name !== "library"
     )
     .map((service) => createServiceCommand(service, getGlobals));
 }
