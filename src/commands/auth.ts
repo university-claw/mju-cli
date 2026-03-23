@@ -1,7 +1,6 @@
 import { Command } from "commander";
 
 import { AuthManager } from "../auth/auth-manager.js";
-import { CliError } from "../errors.js";
 import { resolveLmsRuntimeConfig } from "../lms/config.js";
 import { printData } from "../output/print.js";
 import type { GlobalOptions } from "../types.js";
@@ -62,12 +61,6 @@ export function createAuthCommand(getGlobals: () => GlobalOptions): Command {
       const authManager = new AuthManager(resolveLmsRuntimeConfig({ appDataDir: globals.appDir }));
       printData(await authManager.forget(), globals.format);
     });
-
-  auth.hook("preAction", () => {
-    if (process.platform !== "win32") {
-      throw new CliError("현재 `mju auth` 저장 로그인은 Windows 환경에서만 지원합니다.", 3);
-    }
-  });
 
   return auth;
 }

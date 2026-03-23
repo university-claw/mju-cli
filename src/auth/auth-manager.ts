@@ -14,6 +14,7 @@ import type {
   StoredAuthMode,
   StoredAuthProfile
 } from "./types.js";
+import { MacOsKeychainVault } from "./macos-keychain-vault.js";
 import { WindowsCredentialVault } from "./windows-credential-vault.js";
 
 function clean(value: string | undefined): string | undefined {
@@ -53,6 +54,10 @@ class UnsupportedPasswordVault implements PasswordVault {
 function createDefaultPasswordVault(): PasswordVault {
   if (process.platform === "win32") {
     return new WindowsCredentialVault();
+  }
+
+  if (process.platform === "darwin") {
+    return new MacOsKeychainVault();
   }
 
   return new UnsupportedPasswordVault();
