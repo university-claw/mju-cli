@@ -6,7 +6,7 @@ import type { GlobalOptions } from "../types.js";
 
 export function createServiceCommands(getGlobals: () => GlobalOptions): Command[] {
   return SERVICES
-    .filter((service) => service.name !== "lms")
+    .filter((service) => service.name !== "lms" && service.name !== "msi")
     .map((service) => createServiceCommand(service, getGlobals));
 }
 
