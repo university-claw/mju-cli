@@ -1,11 +1,20 @@
 import { getCourseAssignment, listCourseAssignments } from "./assignments.js";
 import { resolveCourseReference } from "./course-resolver.js";
 import { listRegularTakenCourses } from "./courses.js";
+import { listCourseNotices } from "./notices.js";
+import { getCourseOnlineWeek, listCourseOnlineWeeks } from "./online.js";
 import type { MjuLmsSsoClient } from "./sso-client.js";
-import type { AssignmentSummary, CourseSummary } from "./types.js";
+import type {
+  AssignmentSummary,
+  CourseSummary,
+  NoticeSummary,
+  OnlineWeekSummary
+} from "./types.js";
 import type { ResolvedLmsCredentials } from "../auth/types.js";
 
 const DEFAULT_DUE_DAYS = 7;
+const NOTICE_PAGE_SIZE = 50;
+const MAX_NOTICE_PAGES = 20;
 
 export interface ScopedCourse {
   kjkey: string;
@@ -39,6 +48,31 @@ export interface DueAssignmentItem extends AggregateAssignmentItem {
   hoursUntilDue: number;
 }
 
+export interface AggregateNoticeItem {
+  kjkey: string;
+  courseTitle?: string;
+  articleId: number;
+  title: string;
+  previewText: string;
+  postedAt?: string;
+  viewCount?: number;
+  isUnread: boolean;
+  isExpired: boolean;
+}
+
+export interface AggregateOnlineWeekItem {
+  kjkey: string;
+  courseTitle?: string;
+  lectureWeeks: number;
+  title: string;
+  week?: number;
+  weekLabel?: string;
+  statusLabel?: string;
+  statusText?: string;
+  totalItems: number;
+  incompleteItems: number;
+}
+
 export interface UnsubmittedAssignmentsResult {
   scope: CourseScopeResult["mode"];
   count: number;
@@ -51,6 +85,33 @@ export interface DueAssignmentsResult {
   includeSubmitted: boolean;
   count: number;
   assignments: DueAssignmentItem[];
+}
+
+export interface UnreadNoticesResult {
+  scope: CourseScopeResult["mode"];
+  count: number;
+  notices: AggregateNoticeItem[];
+}
+
+export interface IncompleteOnlineWeeksResult {
+  scope: CourseScopeResult["mode"];
+  count: number;
+  weeks: AggregateOnlineWeekItem[];
+}
+
+export interface ActionItemsResult {
+  scope: CourseScopeResult["mode"];
+  dueWindowDays: number;
+  counts: {
+    unsubmittedAssignments: number;
+    dueAssignments: number;
+    unreadNotices: number;
+    incompleteOnlineWeeks: number;
+  };
+  unsubmittedAssignments: AggregateAssignmentItem[];
+  dueAssignments: DueAssignmentItem[];
+  unreadNotices: AggregateNoticeItem[];
+  incompleteOnlineWeeks: AggregateOnlineWeekItem[];
 }
 
 interface ResolveCourseScopeOptions {
@@ -217,6 +278,57 @@ function toAggregateAssignment(
   };
 }
 
+function toAggregateNotice(
+  course: ScopedCourse,
+  notice: NoticeSummary,
+  courseTitleOverride?: string
+): AggregateNoticeItem {
+  return {
+    kjkey: course.kjkey,
+    ...(courseTitleOverride ?? course.courseTitle
+      ? { courseTitle: courseTitleOverride ?? course.courseTitle }
+      : {}),
+    articleId: notice.articleId,
+    title: notice.title,
+    previewText: notice.previewText,
+    ...(notice.postedAt ? { postedAt: notice.postedAt } : {}),
+    ...(notice.viewCount !== undefined ? { viewCount: notice.viewCount } : {}),
+    isUnread: notice.isUnread,
+    isExpired: notice.isExpired
+  };
+}
+
+function toAggregateOnlineWeek(
+  course: ScopedCourse,
+  week: OnlineWeekSummary,
+  totalItems: number,
+  incompleteItems: number,
+  courseTitleOverride?: string
+): AggregateOnlineWeekItem {
+  return {
+    kjkey: course.kjkey,
+    ...(courseTitleOverride ?? course.courseTitle
+      ? { courseTitle: courseTitleOverride ?? course.courseTitle }
+      : {}),
+    lectureWeeks: week.lectureWeeks,
+    title: week.title,
+    ...(week.week !== undefined ? { week: week.week } : {}),
+    ...(week.weekLabel ? { weekLabel: week.weekLabel } : {}),
+    ...(week.statusLabel ? { statusLabel: week.statusLabel } : {}),
+    ...(week.statusText ? { statusText: week.statusText } : {}),
+    totalItems,
+    incompleteItems
+  };
+}
+
+function isIncompleteOnlineWeek(items: { progressPercent?: number }[]): boolean {
+  if (items.length === 0) {
+    return true;
+  }
+
+  return items.some((item) => (item.progressPercent ?? 0) < 100);
+}
+
 export async function resolveHelperCourseScope(
   client: MjuLmsSsoClient,
   credentials: ResolvedLmsCredentials,
@@ -293,6 +405,109 @@ export async function collectUnsubmittedAssignments(
           toAggregateAssignment(course, assignment, result.courseTitle)
         )
     );
+  }
+
+  return aggregated;
+}
+
+async function listAllNoticesForCourse(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  course: ScopedCourse
+): Promise<{ courseTitle?: string; notices: NoticeSummary[] }> {
+  const notices: NoticeSummary[] = [];
+  const seen = new Set<number>();
+  let discoveredCourseTitle: string | undefined;
+
+  for (let page = 1; page <= MAX_NOTICE_PAGES; page += 1) {
+    const result = await listCourseNotices(client, {
+      userId: credentials.userId,
+      password: credentials.password,
+      kjkey: course.kjkey,
+      page,
+      pageSize: NOTICE_PAGE_SIZE
+    });
+
+    discoveredCourseTitle = result.courseTitle ?? discoveredCourseTitle;
+    const newItems = result.notices.filter((notice) => {
+      if (seen.has(notice.articleId)) {
+        return false;
+      }
+
+      seen.add(notice.articleId);
+      return true;
+    });
+
+    notices.push(...newItems);
+
+    if (result.notices.length < NOTICE_PAGE_SIZE || newItems.length === 0) {
+      break;
+    }
+  }
+
+  return {
+    ...(discoveredCourseTitle ? { courseTitle: discoveredCourseTitle } : {}),
+    notices
+  };
+}
+
+export async function collectUnreadNotices(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  courses: ScopedCourse[]
+): Promise<AggregateNoticeItem[]> {
+  const aggregated: AggregateNoticeItem[] = [];
+
+  for (const course of courses) {
+    const result = await listAllNoticesForCourse(client, credentials, course);
+    aggregated.push(
+      ...result.notices
+        .filter((notice) => notice.isUnread)
+        .map((notice) => toAggregateNotice(course, notice, result.courseTitle))
+    );
+  }
+
+  return aggregated;
+}
+
+export async function collectIncompleteOnlineWeeks(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  courses: ScopedCourse[]
+): Promise<AggregateOnlineWeekItem[]> {
+  const aggregated: AggregateOnlineWeekItem[] = [];
+
+  for (const course of courses) {
+    const result = await listCourseOnlineWeeks(client, {
+      userId: credentials.userId,
+      password: credentials.password,
+      kjkey: course.kjkey
+    });
+
+    for (const week of result.weeks) {
+      const detail = await getCourseOnlineWeek(client, {
+        userId: credentials.userId,
+        password: credentials.password,
+        kjkey: course.kjkey,
+        lectureWeeks: week.lectureWeeks
+      });
+      if (!isIncompleteOnlineWeek(detail.items)) {
+        continue;
+      }
+
+      const incompleteItems = detail.items.filter(
+        (item) => (item.progressPercent ?? 0) < 100
+      ).length;
+      aggregated.push(
+        toAggregateOnlineWeek(
+          course,
+          week,
+          detail.items.length,
+          incompleteItems,
+          detail.courseTitle ?? result.courseTitle
+        )
+      );
+    }
   }
 
   return aggregated;
@@ -382,5 +597,73 @@ export async function getDueAssignments(
     includeSubmitted,
     count: assignments.length,
     assignments
+  };
+}
+
+export async function getUnreadNotices(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  options: ResolveCourseScopeOptions = {}
+): Promise<UnreadNoticesResult> {
+  const scope = await resolveHelperCourseScope(client, credentials, options);
+  const notices = await collectUnreadNotices(client, credentials, scope.courses);
+
+  return {
+    scope: scope.mode,
+    count: notices.length,
+    notices
+  };
+}
+
+export async function getIncompleteOnlineWeeks(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  options: ResolveCourseScopeOptions = {}
+): Promise<IncompleteOnlineWeeksResult> {
+  const scope = await resolveHelperCourseScope(client, credentials, options);
+  const weeks = await collectIncompleteOnlineWeeks(client, credentials, scope.courses);
+
+  return {
+    scope: scope.mode,
+    count: weeks.length,
+    weeks
+  };
+}
+
+export async function getActionItems(
+  client: MjuLmsSsoClient,
+  credentials: ResolvedLmsCredentials,
+  options: ResolveCourseScopeOptions = {}
+): Promise<ActionItemsResult> {
+  const scope = await resolveHelperCourseScope(client, credentials, options);
+  const unsubmittedAssignments = await collectUnsubmittedAssignments(
+    client,
+    credentials,
+    scope.courses
+  );
+  const dueAssignments = await collectDueAssignments(client, credentials, scope.courses, {
+    days: DEFAULT_DUE_DAYS,
+    includeSubmitted: false
+  });
+  const unreadNotices = await collectUnreadNotices(client, credentials, scope.courses);
+  const incompleteOnlineWeeks = await collectIncompleteOnlineWeeks(
+    client,
+    credentials,
+    scope.courses
+  );
+
+  return {
+    scope: scope.mode,
+    dueWindowDays: DEFAULT_DUE_DAYS,
+    counts: {
+      unsubmittedAssignments: unsubmittedAssignments.length,
+      dueAssignments: dueAssignments.length,
+      unreadNotices: unreadNotices.length,
+      incompleteOnlineWeeks: incompleteOnlineWeeks.length
+    },
+    unsubmittedAssignments,
+    dueAssignments,
+    unreadNotices,
+    incompleteOnlineWeeks
   };
 }

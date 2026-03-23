@@ -7,7 +7,13 @@ import { resolveLmsRuntimeConfig } from "../lms/config.js";
 import { getCourseAssignment, listCourseAssignments } from "../lms/assignments.js";
 import { listRegularTakenCourses } from "../lms/courses.js";
 import { resolveCourseReference } from "../lms/course-resolver.js";
-import { getDueAssignments, getUnsubmittedAssignments } from "../lms/helpers.js";
+import {
+  getActionItems,
+  getDueAssignments,
+  getIncompleteOnlineWeeks,
+  getUnreadNotices,
+  getUnsubmittedAssignments
+} from "../lms/helpers.js";
 import { getCourseMaterial, listCourseMaterials } from "../lms/materials.js";
 import { getCourseNotice, listCourseNotices } from "../lms/notices.js";
 import { getCourseOnlineWeek, listCourseOnlineWeeks } from "../lms/online.js";
@@ -57,11 +63,17 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
             materials: ["list", "get"],
             assignments: ["list", "get"],
             online: ["list", "get"],
-            helpers: ["+unsubmitted", "+due-assignments"]
+            helpers: [
+              "+unsubmitted",
+              "+due-assignments",
+              "+unread-notices",
+              "+incomplete-online",
+              "+action-items"
+            ]
           },
           planned: {
             attachments: ["download", "download-bulk"],
-            helpers: ["+digest", "+action-items", "+unread-notices", "+incomplete-online"]
+            helpers: ["+digest"]
           }
         },
         globals.format
@@ -371,6 +383,60 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
         printData(result, globals.format);
       }
     );
+
+  lms
+    .command("+unread-notices")
+    .description("Show unread notices for one course or the latest-term course set")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .option("--all-courses", "search across the latest term course set")
+    .action(async (options: { course?: string; kjkey?: string; allCourses?: boolean }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLmsClientWithCredentials(globals);
+      const result = await getUnreadNotices(client, credentials, {
+        ...(options.course ? { course: options.course } : {}),
+        ...(options.kjkey ? { kjkey: options.kjkey } : {}),
+        ...(options.allCourses ? { allCourses: true } : {})
+      });
+
+      printData(result, globals.format);
+    });
+
+  lms
+    .command("+incomplete-online")
+    .description("Show incomplete online learning weeks for one course or the latest-term course set")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .option("--all-courses", "search across the latest term course set")
+    .action(async (options: { course?: string; kjkey?: string; allCourses?: boolean }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLmsClientWithCredentials(globals);
+      const result = await getIncompleteOnlineWeeks(client, credentials, {
+        ...(options.course ? { course: options.course } : {}),
+        ...(options.kjkey ? { kjkey: options.kjkey } : {}),
+        ...(options.allCourses ? { allCourses: true } : {})
+      });
+
+      printData(result, globals.format);
+    });
+
+  lms
+    .command("+action-items")
+    .description("Show current LMS action items for one course or the latest-term course set")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .option("--all-courses", "search across the latest term course set")
+    .action(async (options: { course?: string; kjkey?: string; allCourses?: boolean }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLmsClientWithCredentials(globals);
+      const result = await getActionItems(client, credentials, {
+        ...(options.course ? { course: options.course } : {}),
+        ...(options.kjkey ? { kjkey: options.kjkey } : {}),
+        ...(options.allCourses ? { allCourses: true } : {})
+      });
+
+      printData(result, globals.format);
+    });
 
   lms.addCommand(courses);
   lms.addCommand(notices);
