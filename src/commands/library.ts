@@ -4,6 +4,7 @@ import { AuthManager } from "../auth/auth-manager.js";
 import { resolveLmsRuntimeConfig } from "../lms/config.js";
 import { MjuLibraryClient } from "../library/client.js";
 import { resolveLibraryRuntimeConfig } from "../library/config.js";
+import { getLibraryMyReservations } from "../library/helpers.js";
 import {
   getLibraryStudyRoomDetail,
   listLibraryRoomReservations,
@@ -59,16 +60,28 @@ export function createLibraryCommand(getGlobals: () => GlobalOptions): Command {
           implemented: {
             "study-rooms": ["list", "get", "list-reservations"],
             "reading-rooms": ["list", "get"],
-            seats: ["list-reservations"]
+            seats: ["list-reservations"],
+            helpers: ["+my-reservations"]
           },
           planned: {
             "study-rooms": ["reserve", "update-reservation", "cancel-reservation"],
             seats: ["reserve", "cancel"],
-            helpers: ["+my-reservations", "+seat-position"]
+            helpers: ["+seat-position"]
           }
         },
         globals.format
       );
+    });
+
+  library
+    .command("+my-reservations")
+    .description("Show study room and seat reservations together")
+    .action(async () => {
+      const globals = getGlobals();
+      const { client, credentials } = await createLibraryClientWithCredentials(globals);
+      const result = await getLibraryMyReservations(client, credentials);
+
+      printData(result, globals.format);
     });
 
   const studyRooms = new Command("study-rooms").description(
