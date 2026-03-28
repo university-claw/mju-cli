@@ -151,6 +151,13 @@ interface CollectDueAssignmentsOptions {
   includeSubmitted?: boolean;
 }
 
+function isIgnorableAssignmentDetailError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("과제 상세를 읽지 못했습니다.")
+  );
+}
+
 function compareCourseTerm(
   left: { year?: number; term?: number },
   right: { year?: number; term?: number }
@@ -563,12 +570,22 @@ export async function collectDueAssignments(
     );
 
     for (const assignment of candidates) {
-      const detail = await getCourseAssignment(client, {
-        userId: credentials.userId,
-        password: credentials.password,
-        kjkey: course.kjkey,
-        rtSeq: assignment.rtSeq
-      });
+      let detail;
+      try {
+        detail = await getCourseAssignment(client, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: course.kjkey,
+          rtSeq: assignment.rtSeq
+        });
+      } catch (error) {
+        if (isIgnorableAssignmentDetailError(error)) {
+          continue;
+        }
+
+        throw error;
+      }
+
       const dueDate = parseDueDateTime(detail.dueAt);
       if (!detail.dueAt || !dueDate) {
         continue;
