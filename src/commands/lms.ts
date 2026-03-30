@@ -27,6 +27,7 @@ import {
 import { getCourseMaterial, listCourseMaterials } from "../lms/materials.js";
 import { getCourseNotice, listCourseNotices } from "../lms/notices.js";
 import { getCourseOnlineWeek, listCourseOnlineWeeks } from "../lms/online.js";
+import { watchCourseOnlineItem } from "../lms/online-watch.js";
 import { MjuLmsSsoClient } from "../lms/sso-client.js";
 
 function parseOptionalInt(value: string | undefined, label: string): number | undefined {
@@ -77,6 +78,19 @@ function parsePositiveIntList(value: string | undefined, label: string): number[
   });
 }
 
+function parseNonNegativeInt(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`${label} 는 0 이상의 정수여야 합니다.`);
+  }
+
+  return parsed;
+}
+
 async function resolveDraftText(
   inlineText: string | undefined,
   textFilePath: string | undefined
@@ -113,7 +127,7 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
             notices: ["list", "get"],
             materials: ["list", "get"],
             assignments: ["list", "get", "check-submission"],
-            online: ["list", "get"],
+            online: ["list", "get", "watch"],
             attachments: ["download", "download-bulk"],
             helpers: [
               "+unsubmitted",
@@ -431,6 +445,56 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
 
       printData(result, globals.format);
     });
+
+  online
+    .command("watch")
+    .description("Play one online learning video item until it ends, then exit")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--lecture-weeks <id>", "online learning lecture_weeks")
+    .option("--link-seq <id>", "specific online learning item link_seq")
+    .option("--item-index <index>", "0-based online learning item index")
+    .option("--show-browser", "show the browser window while watching")
+    .option("--poll-seconds <seconds>", "player polling interval in seconds")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        lectureWeeks: string;
+        linkSeq?: string;
+        itemIndex?: string;
+        showBrowser?: boolean;
+        pollSeconds?: string;
+      }) => {
+        const globals = getGlobals();
+        const { config, client, credentials } = await createLmsClientWithCredentials(globals);
+        const resolvedCourse = await resolveCourseReference(client, credentials, {
+          course: options.course,
+          kjkey: options.kjkey
+        });
+        const lectureWeeks = parseOptionalInt(options.lectureWeeks, "lecture-weeks");
+        if (lectureWeeks === undefined) {
+          throw new Error("lecture-weeks 는 필수입니다.");
+        }
+
+        const linkSeq = parseOptionalInt(options.linkSeq, "link-seq");
+        const itemIndex = parseNonNegativeInt(options.itemIndex, "item-index");
+        const pollSeconds = parseOptionalInt(options.pollSeconds, "poll-seconds");
+
+        const result = await watchCourseOnlineItem(client, config, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: resolvedCourse.kjkey,
+          lectureWeeks,
+          ...(linkSeq !== undefined ? { linkSeq } : {}),
+          ...(itemIndex !== undefined ? { itemIndex } : {}),
+          ...(options.showBrowser !== undefined ? { headless: !options.showBrowser } : {}),
+          ...(pollSeconds !== undefined ? { pollIntervalMs: pollSeconds * 1000 } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
 
   const attachments = new Command("attachments").description("Download LMS attachments");
 

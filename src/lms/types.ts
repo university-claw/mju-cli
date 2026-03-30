@@ -363,6 +363,55 @@ export interface OnlineWeekDetailResult {
   items: OnlineLearningItem[];
 }
 
+export interface OnlineWatchPlayerSnapshot {
+  currentTime?: number | null;
+  duration?: number | null;
+  paused?: boolean | null;
+  ended?: boolean | null;
+  playbackRate?: number | null;
+  readyState?: number | null;
+}
+
+export interface OnlineWatchEvent extends OnlineWatchPlayerSnapshot {
+  ts: string;
+  elapsedSec: number;
+  event:
+    | "open-main"
+    | "enter-classroom"
+    | "open-online-view"
+    | "launch-item"
+    | "prepare-player"
+    | "progress"
+    | "resume"
+    | "resume-after-stall"
+    | "ended"
+    | "exit-learning"
+    | "done";
+  frameUrl?: string;
+  stalledSec?: number;
+}
+
+export interface OnlineWatchResult {
+  kjkey: string;
+  courseTitle?: string;
+  lectureWeeks: number;
+  title?: string;
+  selectedItem: OnlineLearningItem;
+  resolvedItemIndex: number;
+  resolvedBy: "linkSeq" | "itemIndex" | "single-item";
+  headless: boolean;
+  playbackRate: number;
+  watchStartedAt: string;
+  watchFinishedAt: string;
+  elapsedSec: number;
+  finalPageUrl: string;
+  frameUrl: string;
+  exitCalled: boolean;
+  finalSnapshot?: OnlineWatchPlayerSnapshot | null;
+  refreshedItem?: OnlineLearningItem;
+  events: OnlineWatchEvent[];
+}
+
 export interface LoginSnapshotResult {
   loggedIn: boolean;
   usedSavedSession: boolean;
