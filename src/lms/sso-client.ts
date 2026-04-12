@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import https from "node:https";
 import path from "node:path";
 
 import { load } from "cheerio";
@@ -55,11 +56,28 @@ export class MjuLmsSsoClient {
   }
 
   private buildHttpClient() {
+    // SSO/LMS도 MSI와 동일한 WAS 계열이라 keep-alive 소켓 재사용 시 ECONNRESET
+    // 가능성이 있다. 매 요청 fresh connection + transient 오류 재시도.
     return got.extend({
       cookieJar: this.cookieJar,
       followRedirect: true,
       throwHttpErrors: false,
-      retry: { limit: 0 },
+      retry: {
+        limit: 2,
+        methods: ["GET", "POST"],
+        errorCodes: [
+          "ECONNRESET",
+          "ETIMEDOUT",
+          "EAI_AGAIN",
+          "ECONNREFUSED",
+          "EPIPE"
+        ]
+      },
+      // keepAlive를 꺼도 TLS session ticket cache가 남으면 MSI/SSO 계열 WAS가
+      // resumption을 거부하며 RST → maxCachedSessions:0 으로 TLS 캐시도 끈다.
+      agent: {
+        https: new https.Agent({ keepAlive: false, maxCachedSessions: 0 })
+      },
       headers: {
         "user-agent": this.config.userAgent
       },

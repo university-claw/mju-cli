@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import https from "node:https";
 import path from "node:path";
 
 import { load } from "cheerio";
@@ -71,11 +72,29 @@ export class MjuMsiClient {
   }
 
   private buildHttpClient() {
+    // MSI/WebLogic이 응답 직후 TCP를 닫는 경우 Node agent가 stale한 소켓을
+    // keep-alive pool에서 재사용해 ECONNRESET이 난다. 매 요청 fresh connection을
+    // 쓰고, 그래도 터지는 transient 오류는 2회 재시도한다.
     return got.extend({
       cookieJar: this.cookieJar,
       followRedirect: true,
       throwHttpErrors: false,
-      retry: { limit: 0 },
+      retry: {
+        limit: 2,
+        methods: ["GET", "POST"],
+        errorCodes: [
+          "ECONNRESET",
+          "ETIMEDOUT",
+          "EAI_AGAIN",
+          "ECONNREFUSED",
+          "EPIPE"
+        ]
+      },
+      // keepAlive를 꺼도 Node가 TLS session ticket을 캐시해서 두 번째 요청에 재사용하는데,
+      // MSI WebLogic이 이 TLS resumption을 거부하며 RST를 보낸다 → maxCachedSessions:0 필수.
+      agent: {
+        https: new https.Agent({ keepAlive: false, maxCachedSessions: 0 })
+      },
       headers: {
         "user-agent": this.config.userAgent
       },
@@ -172,6 +191,32 @@ export class MjuMsiClient {
   }
 
   async login(userId: string, password: string): Promise<DecodedResponse> {
+    // MSI/SSO 계열 서버가 stale 세션 또는 WAS 상태 꼬임으로 ECONNRESET을
+    // 던지는 경우가 있다. 실패 시 완전히 새 HTTP state로 1회 재시도한다.
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await this.loginOnce(userId, password);
+      } catch (err) {
+        lastErr = err;
+        const code =
+          (err as NodeJS.ErrnoException | undefined)?.code ??
+          (err as { cause?: NodeJS.ErrnoException } | undefined)?.cause?.code;
+        if (code === "ECONNRESET" && attempt === 0) {
+          this.resetHttpState();
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
+  }
+
+  private async loginOnce(
+    userId: string,
+    password: string
+  ): Promise<DecodedResponse> {
     let response = await this.getPage(MSI_BASE, { followRedirect: true });
     let $ = load(response.text);
     let csrf = $('input[name="_csrf"]').attr("value") ?? "";
@@ -268,15 +313,36 @@ export class MjuMsiClient {
     options: { preferSavedSession?: boolean } = {}
   ): Promise<{ mainResponse: DecodedResponse; usedSavedSession: boolean }> {
     if (options.preferSavedSession !== false && (await this.restoreSavedSession())) {
-      const mainFromSavedSession = await this.fetchMainPage();
-      if (looksLoggedIn(mainFromSavedSession)) {
-        return {
-          mainResponse: mainFromSavedSession,
-          usedSavedSession: true
-        };
+      try {
+        const mainFromSavedSession = await this.fetchMainPage();
+        if (looksLoggedIn(mainFromSavedSession)) {
+          return {
+            mainResponse: mainFromSavedSession,
+            usedSavedSession: true
+          };
+        }
+      } catch (err) {
+        // 저장된 세션으로 MSI를 때리는 순간 ECONNRESET/ETIMEDOUT이 나는 경우가 있다
+        // (서버측 세션 invalidate + WAS 상태 꼬임). 세션 폐기 후 fresh login으로 진행.
+        const code =
+          (err as NodeJS.ErrnoException | undefined)?.code ??
+          (err as { cause?: NodeJS.ErrnoException } | undefined)?.cause?.code;
+        if (
+          code !== "ECONNRESET" &&
+          code !== "ETIMEDOUT" &&
+          code !== "ECONNREFUSED" &&
+          code !== "EPIPE"
+        ) {
+          throw err;
+        }
+        console.warn(
+          `[msi] saved session fetchMainPage failed (${code}), falling back to fresh login`
+        );
       }
 
       await this.clearSavedSession();
+      // 서버측 상태가 가라앉도록 짧은 지연을 둔다.
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     const mainResponse = await this.login(userId, password);

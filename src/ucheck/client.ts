@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import https from "node:https";
 import path from "node:path";
 
 import { load } from "cheerio";
@@ -43,11 +44,28 @@ export class MjuUcheckClient {
   }
 
   private buildHttpClient() {
+    // UCheck 서버도 MSI/LMS와 같은 한국 WAS 계열 — keep-alive 소켓 재사용 시
+    // ECONNRESET 가능성이 있어 fresh connection + transient 재시도로 방어한다.
     return got.extend({
       cookieJar: this.cookieJar,
       followRedirect: true,
       throwHttpErrors: false,
-      retry: { limit: 0 },
+      retry: {
+        limit: 2,
+        methods: ["GET", "POST"],
+        errorCodes: [
+          "ECONNRESET",
+          "ETIMEDOUT",
+          "EAI_AGAIN",
+          "ECONNREFUSED",
+          "EPIPE"
+        ]
+      },
+      // keepAlive를 꺼도 TLS session ticket cache가 남으면 한국 WAS들이 resumption을
+      // 거부하며 RST를 보낸다 → maxCachedSessions:0 으로 TLS 캐시도 끈다.
+      agent: {
+        https: new https.Agent({ keepAlive: false, maxCachedSessions: 0 })
+      },
       headers: {
         "user-agent": this.config.userAgent
       },
