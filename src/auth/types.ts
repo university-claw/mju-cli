@@ -1,6 +1,7 @@
 export type StoredAuthMode =
   | "windows-credential-manager"
-  | "macos-keychain";
+  | "macos-keychain"
+  | "file-encrypted";
 
 export interface StoredAuthProfile {
   userId: string;

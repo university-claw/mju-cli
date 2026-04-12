@@ -16,6 +16,7 @@ import type {
 } from "./types.js";
 import { MacOsKeychainVault } from "./macos-keychain-vault.js";
 import { WindowsCredentialVault } from "./windows-credential-vault.js";
+import { FilePasswordVault } from "./file-vault.js";
 
 function clean(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -51,13 +52,18 @@ class UnsupportedPasswordVault implements PasswordVault {
   }
 }
 
-function createDefaultPasswordVault(): PasswordVault {
+function createDefaultPasswordVault(appDataDir?: string): PasswordVault {
   if (process.platform === "win32") {
     return new WindowsCredentialVault();
   }
 
   if (process.platform === "darwin") {
     return new MacOsKeychainVault();
+  }
+
+  // Linux/container: AES-256-GCM 파일 vault. appDataDir 기반으로 유저별 격리.
+  if (appDataDir) {
+    return new FilePasswordVault(appDataDir);
   }
 
   return new UnsupportedPasswordVault();
@@ -81,7 +87,7 @@ export class AuthManager {
     dependencies: AuthManagerDependencies = {}
   ) {
     this.profileStore = new AuthProfileStore(config.profileFile);
-    this.passwordVault = dependencies.passwordVault ?? createDefaultPasswordVault();
+    this.passwordVault = dependencies.passwordVault ?? createDefaultPasswordVault(config.appDataDir);
     this.clientFactory = dependencies.clientFactory ?? (() => new MjuLmsSsoClient(config));
   }
 
