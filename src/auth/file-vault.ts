@@ -36,18 +36,41 @@ export class FilePasswordVault implements PasswordVault {
       }
       return buf;
     }
-    // 로컬 키 파일 (없으면 생성)
     const keyPath = path.join(this.vaultDir(), ".key");
+
+    // 먼저 읽기 시도
     try {
       const data = await fs.readFile(keyPath);
       if (data.length === 32) return data;
-    } catch {
-      // 키 파일 없음
+      throw new Error(`Vault key at ${keyPath} is corrupted (expected 32 bytes, got ${data.length}). Stored passwords cannot be decrypted. Restore from backup or run 'mju auth forget'.`);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw err;
     }
+
+    // 없으면 원자적으로 생성 — O_CREAT|O_EXCL 로 race 차단
     await fs.mkdir(this.vaultDir(), { recursive: true, mode: 0o700 });
     const newKey = crypto.randomBytes(32);
-    await fs.writeFile(keyPath, newKey, { mode: 0o600 });
-    return newKey;
+    try {
+      const fh = await fs.open(keyPath, "wx", 0o600);
+      try {
+        await fh.write(newKey);
+      } finally {
+        await fh.close();
+      }
+      return newKey;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        // 다른 프로세스가 동시에 만들었음 — 그걸 읽어서 쓰면 됨
+        const data = await fs.readFile(keyPath);
+        if (data.length !== 32) {
+          throw new Error(`Concurrent vault key creation produced invalid file at ${keyPath}`);
+        }
+        return data;
+      }
+      throw err;
+    }
   }
 
   async savePassword(targetName: string, _userName: string, password: string): Promise<void> {
@@ -59,7 +82,16 @@ export class FilePasswordVault implements PasswordVault {
     const payload = Buffer.concat([iv, tag, ciphertext]).toString("base64");
 
     await fs.mkdir(this.vaultDir(), { recursive: true, mode: 0o700 });
-    await fs.writeFile(this.entryPath(targetName), payload, { mode: 0o600 });
+    // 원자적 쓰기: tmp → rename
+    const entryPath = this.entryPath(targetName);
+    const tmpPath = `${entryPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, payload, { mode: 0o600 });
+      await fs.rename(tmpPath, entryPath);
+    } catch (err) {
+      try { await fs.unlink(tmpPath); } catch {}
+      throw err;
+    }
   }
 
   async getPassword(targetName: string): Promise<string | null> {

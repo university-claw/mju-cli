@@ -24,8 +24,15 @@ export class LibrarySessionStore {
   }
 
   async save(payload: LibrarySessionPayload): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf8");
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
+      await fs.rename(tmp, this.filePath);
+    } catch (err) {
+      try { await fs.unlink(tmp); } catch {}
+      throw err;
+    }
   }
 
   async remove(): Promise<boolean> {

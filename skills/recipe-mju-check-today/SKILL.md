@@ -13,7 +13,9 @@ metadata:
 
 # Check Today
 
+모든 명령은 `--app-dir /data/users/<DISCORD_USER_ID> --format json` 플래그와 함께 실행됩니다.
+
 ## Steps
-1. LMS 액션 확인: `mju lms +action-items`
-2. 도서관 예약 확인: `mju library +my-reservations`
-3. 필요한 경우 강의 digest 확인: `mju lms +digest --course COURSE_NAME`
+1. LMS 전체 강의 액션 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms +action-items --all-courses`
+2. 도서관 예약 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library +my-reservations`
+3. 필요한 경우 특정 강의 digest 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms +digest --course COURSE_NAME`

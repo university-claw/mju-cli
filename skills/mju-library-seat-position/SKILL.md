@@ -13,7 +13,9 @@ metadata:
 
 # Library Seat Position
 
+모든 명령은 `--app-dir /data/users/<DISCORD_USER_ID> --format json` 플래그와 함께 실행됩니다.
+
 ## 사용 방법
-1. 열람실 상세 확인: `mju library reading-rooms get --room-id ROOM_ID`
-2. 좌석 코드 기반 설명: `mju library +seat-position --room-id ROOM_ID --seat-code SEAT_CODE`
-3. 좌석 ID 기반 설명: `mju library +seat-position --room-id ROOM_ID --seat-id SEAT_ID`
+1. 열람실 상세 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library reading-rooms get --room-id ROOM_ID`
+2. 좌석 코드 기반 설명: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library +seat-position --room-id ROOM_ID --seat-code SEAT_CODE`
+3. 좌석 ID 기반 설명: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library +seat-position --room-id ROOM_ID --seat-id SEAT_ID`

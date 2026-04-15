@@ -20,8 +20,16 @@ export class AuthProfileStore {
   }
 
   async save(profile: StoredAuthProfile): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(profile, null, 2), "utf8");
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+    // 원자적 쓰기 + 제한된 퍼미션
+    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(profile, null, 2), { encoding: "utf8", mode: 0o600 });
+      await fs.rename(tmp, this.filePath);
+    } catch (err) {
+      try { await fs.unlink(tmp); } catch {}
+      throw err;
+    }
   }
 
   async clear(): Promise<boolean> {

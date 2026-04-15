@@ -13,9 +13,11 @@ metadata:
 
 # Study Day Digest
 
+모든 명령은 `--app-dir /data/users/<DISCORD_USER_ID> --format json` 플래그와 함께 실행됩니다.
+
 ## Steps
-1. 강의 digest 확인: `mju lms +digest --course COURSE_NAME`
-2. 액션 아이템 확인: `mju lms +action-items`
+1. 특정 강의 digest 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms +digest --course COURSE_NAME`
+2. 전체 강의 액션 아이템 확인: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms +action-items --all-courses`
 3. 도서관 좌석 위치나 예약 확인
-   - 위치 설명: `mju library +seat-position --room-id ROOM_ID --seat-code SEAT_CODE`
-   - 예약 흐름: `mju library seats reserve-preview --room-id ROOM_ID --seat-id SEAT_ID`
+   - 위치 설명: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library +seat-position --room-id ROOM_ID --seat-code SEAT_CODE`
+   - 예약 흐름: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json library seats reserve-preview --room-id ROOM_ID --seat-id SEAT_ID`
