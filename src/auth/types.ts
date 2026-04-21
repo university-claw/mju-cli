@@ -35,6 +35,7 @@ export interface AuthStatus {
   authMode?: StoredAuthMode;
   passwordStored: boolean;
   sessionFileExists: boolean;
+  authenticated: boolean;
 }
 
 export interface LogoutResult {

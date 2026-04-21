@@ -167,6 +167,10 @@ export class AuthManager {
     const profile = await this.profileStore.load();
     const sessionFileExists = await fileExists(this.config.sessionFile);
     const credentialTarget = profile ? this.getCredentialTarget(profile.userId) : undefined;
+    const passwordStored =
+      credentialTarget !== undefined
+        ? await this.passwordVault.hasPassword(credentialTarget)
+        : false;
 
     return {
       appDataDir: this.config.appDataDir,
@@ -177,11 +181,9 @@ export class AuthManager {
       profileExists: profile !== null,
       ...(profile ? { storedUserId: profile.userId } : {}),
       ...(profile ? { authMode: profile.authMode } : {}),
-      passwordStored:
-        credentialTarget !== undefined
-          ? await this.passwordVault.hasPassword(credentialTarget)
-          : false,
-      sessionFileExists
+      passwordStored,
+      sessionFileExists,
+      authenticated: profile !== null && passwordStored
     };
   }
 
