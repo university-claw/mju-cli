@@ -3,7 +3,14 @@ import fs from "node:fs/promises";
 import type { LmsRuntimeConfig } from "../lms/config.js";
 import type { LoginSnapshotResult } from "../lms/types.js";
 import { MjuLmsSsoClient } from "../lms/sso-client.js";
-import { AuthProfileStore } from "./profile-store.js";
+import {
+  createAuthProfileStore,
+  createLmsSessionStore,
+  createPasswordVault,
+  resolveStorageContext,
+  type StorageContext
+} from "../storage/resolver.js";
+import type { AuthProfileStorage } from "../storage/types.js";
 import { buildCredentialTarget, type PasswordVault } from "./password-vault.js";
 import type {
   AuthStatus,
@@ -14,9 +21,6 @@ import type {
   StoredAuthMode,
   StoredAuthProfile
 } from "./types.js";
-import { MacOsKeychainVault } from "./macos-keychain-vault.js";
-import { WindowsCredentialVault } from "./windows-credential-vault.js";
-import { FilePasswordVault } from "./file-vault.js";
 
 function clean(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -32,43 +36,6 @@ export interface StoredLoginResult extends LoginStoreResult {
   snapshot: LoginSnapshotResult;
 }
 
-class UnsupportedPasswordVault implements PasswordVault {
-  readonly authMode = "unsupported" as const;
-
-  async savePassword(): Promise<void> {
-    throw new Error("현재 운영체제에서는 저장 로그인을 지원하지 않습니다.");
-  }
-
-  async getPassword(): Promise<string | null> {
-    throw new Error("현재 운영체제에서는 저장된 비밀번호 읽기를 지원하지 않습니다.");
-  }
-
-  async deletePassword(): Promise<boolean> {
-    return false;
-  }
-
-  async hasPassword(): Promise<boolean> {
-    return false;
-  }
-}
-
-function createDefaultPasswordVault(appDataDir?: string): PasswordVault {
-  if (process.platform === "win32") {
-    return new WindowsCredentialVault();
-  }
-
-  if (process.platform === "darwin") {
-    return new MacOsKeychainVault();
-  }
-
-  // Linux/container: AES-256-GCM 파일 vault. appDataDir 기반으로 유저별 격리.
-  if (appDataDir) {
-    return new FilePasswordVault(appDataDir);
-  }
-
-  return new UnsupportedPasswordVault();
-}
-
 function resolveStoredAuthMode(vault: PasswordVault): StoredAuthMode {
   if (vault.authMode === "unsupported") {
     throw new Error("현재 운영체제에서는 저장 로그인 비밀번호 보관소를 지원하지 않습니다.");
@@ -78,16 +45,19 @@ function resolveStoredAuthMode(vault: PasswordVault): StoredAuthMode {
 }
 
 export class AuthManager {
-  private readonly profileStore: AuthProfileStore;
+  private readonly profileStore: AuthProfileStorage;
   private readonly passwordVault: PasswordVault;
   private readonly clientFactory: () => MjuLmsSsoClient;
+  private readonly storageContext: StorageContext;
 
   constructor(
     private readonly config: LmsRuntimeConfig,
     dependencies: AuthManagerDependencies = {}
   ) {
-    this.profileStore = new AuthProfileStore(config.profileFile);
-    this.passwordVault = dependencies.passwordVault ?? createDefaultPasswordVault(config.appDataDir);
+    this.storageContext = resolveStorageContext(config.appDataDir);
+    this.profileStore = createAuthProfileStore(this.storageContext, config.profileFile);
+    this.passwordVault =
+      dependencies.passwordVault ?? createPasswordVault(this.storageContext);
     this.clientFactory = dependencies.clientFactory ?? (() => new MjuLmsSsoClient(config));
   }
 
@@ -165,7 +135,13 @@ export class AuthManager {
 
   async status(): Promise<AuthStatus> {
     const profile = await this.profileStore.load();
-    const sessionFileExists = await fileExists(this.config.sessionFile);
+    const sessionFileExists =
+      this.storageContext.mode === "postgres"
+        ? (await createLmsSessionStore(
+            this.storageContext,
+            this.config.sessionFile
+          ).load()) !== null
+        : await fileExists(this.config.sessionFile);
     const credentialTarget = profile ? this.getCredentialTarget(profile.userId) : undefined;
 
     return {

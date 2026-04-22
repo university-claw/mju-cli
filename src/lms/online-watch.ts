@@ -10,7 +10,10 @@ import {
   STUDENT_ONLINE_VIEW_URL
 } from "./constants.js";
 import { getCourseOnlineWeek } from "./online.js";
-import { SessionStore } from "./session-store.js";
+import {
+  createLmsSessionStore,
+  resolveStorageContext
+} from "../storage/resolver.js";
 import { MjuLmsSsoClient } from "./sso-client.js";
 import type {
   OnlineLearningItem,
@@ -88,8 +91,14 @@ function createWatchEventLog(startedMs: number): WatchEventLog {
   };
 }
 
-async function loadContextCookies(sessionFile: string): Promise<ContextCookie[]> {
-  const cookieJar = await new SessionStore(sessionFile).load();
+async function loadContextCookies(
+  appDataDir: string,
+  sessionFile: string
+): Promise<ContextCookie[]> {
+  const cookieJar = await createLmsSessionStore(
+    resolveStorageContext(appDataDir),
+    sessionFile
+  ).load();
   if (!cookieJar) {
     throw new CliError(
       "저장된 LMS 세션을 찾지 못했습니다. `mju auth login --id YOUR_ID --password YOUR_PASSWORD` 로 먼저 로그인해주세요."
@@ -440,7 +449,9 @@ async function createBrowserContext(
     userAgent: config.userAgent,
     viewport: { width: 1440, height: 900 }
   });
-  await context.addCookies(await loadContextCookies(config.sessionFile));
+  await context.addCookies(
+    await loadContextCookies(config.appDataDir, config.sessionFile)
+  );
 
   return { browser, context };
 }

@@ -15,19 +15,22 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "docs:skills": "node scripts/generate-skills-doc.mjs",
     "dev": "tsx src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "migrate": "tsx src/main.ts migrate"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
     "commander": "^14.0.1",
     "got": "^14.6.6",
     "iconv-lite": "^0.7.2",
+    "pg": "^8.16.3",
     "playwright": "^1.58.2",
     "tough-cookie": "^6.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
