@@ -4,10 +4,14 @@ import {
   UCHECK_ACCOUNT_INFO_URL,
   UCHECK_ATTENDANCE_ITEMS_URL,
   UCHECK_ATTENDANCE_LOGS_URL,
+  UCHECK_LECTURE_DETAIL_URL,
   UCHECK_LECTURE_LIST_URL
 } from "./constants.js";
 import type {
   UcheckAccountInfo,
+  UcheckAttendanceAlertPlanResult,
+  UcheckAttendanceAlertSchedule,
+  UcheckAttendanceAlertSession,
   UcheckAttendanceSession,
   UcheckAttendanceSummary,
   UcheckCourseAttendanceResult,
@@ -66,6 +70,20 @@ interface UcheckAttendanceLectureRaw {
   start_time?: string;
   end_time?: string;
   past_yn?: string;
+}
+
+interface UcheckLectureDetailRaw {
+  lecture_week?: number;
+  class_no?: number;
+  s_class_no?: number;
+  lecture_date?: string;
+  start_time?: string;
+  end_time?: string;
+  attend_smin?: number | string | null;
+  attend_emin?: number | string | null;
+  later_min?: number | string | null;
+  out_smin?: number | string | null;
+  out_emin?: number | string | null;
 }
 
 interface UcheckAttendanceLogRaw {
@@ -202,6 +220,52 @@ function parseInteger(value: number | string | undefined | null): number {
   }
 
   return 0;
+}
+
+function parseOptionalInteger(
+  value: number | string | undefined | null
+): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+
+  return undefined;
+}
+
+function formatClockTime(value: string | undefined): string | undefined {
+  if (!value || !/^\d{4}$/.test(value)) {
+    return undefined;
+  }
+
+  return `${value.slice(0, 2)}:${value.slice(2, 4)}`;
+}
+
+function parseClockMinutes(value: string): number {
+  const [hour, minute] = value.split(":").map((part) => Number.parseInt(part, 10));
+  return hour * 60 + minute;
+}
+
+function formatClockMinutes(totalMinutes: number): string {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hour = Math.trunc(normalized / 60);
+  const minute = normalized % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function dayOfWeekFromDate(value: string | undefined): number | undefined {
+  if (!value || !/^\d{8}$/.test(value)) {
+    return undefined;
+  }
+
+  const year = Number.parseInt(value.slice(0, 4), 10);
+  const month = Number.parseInt(value.slice(4, 6), 10);
+  const day = Number.parseInt(value.slice(6, 8), 10);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 function parseScheduleSummary(value: string | undefined): ParsedScheduleSegment[] {
@@ -356,6 +420,194 @@ export async function listUcheckLectures(
       } satisfies UcheckLectureSummary;
     })
     .filter((lecture): lecture is UcheckLectureSummary => lecture !== undefined);
+}
+
+async function fetchLectureDetailRows(
+  client: MjuUcheckClient,
+  lectureNo: number
+): Promise<UcheckLectureDetailRaw[]> {
+  const response = await client.postJson(UCHECK_LECTURE_DETAIL_URL, {
+    lecture_no: lectureNo
+  });
+  return parseJsonEnvelope<UcheckLectureDetailRaw[]>(
+    response.text,
+    "UCheck 강의 상세"
+  );
+}
+
+export async function getUcheckAttendanceAlertPlan(
+  client: MjuUcheckClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    year?: number;
+    term?: number;
+    leadMinutes?: number;
+  } = {}
+): Promise<UcheckAttendanceAlertPlanResult> {
+  const accountInfo = await getUcheckAccountInfo(client, credentials);
+  const year = options.year ?? accountInfo.baseYearTerm.lectureYear;
+  const term = options.term ?? accountInfo.baseYearTerm.lectureTerm;
+  const leadMinutes = options.leadMinutes ?? 5;
+  const lectures = await listUcheckLectures(client, credentials, year, term);
+  const warnings: string[] = [];
+  const sessions: UcheckAttendanceAlertSession[] = [];
+  const schedulesByKey = new Map<string, UcheckAttendanceAlertSchedule>();
+
+  for (const lecture of lectures) {
+    let rows: UcheckLectureDetailRaw[];
+    try {
+      rows = await fetchLectureDetailRows(client, lecture.lectureNo);
+    } catch (error) {
+      warnings.push(
+        `${lecture.courseTitle}(${lecture.lectureNo}) 상세 조회 실패: ${(error as Error).message}`
+      );
+      continue;
+    }
+
+    if (rows.length === 0) {
+      warnings.push(`${lecture.courseTitle}(${lecture.lectureNo}) 상세 회차 없음`);
+      continue;
+    }
+
+    for (const row of rows) {
+      const week = parseInteger(row.lecture_week);
+      const classNo = parseInteger(row.class_no);
+      const subClassNo = parseInteger(row.s_class_no) || classNo;
+      const date = formatDate(row.lecture_date);
+      const dateLabel = formatDateLabel(row.lecture_date);
+      const dayOfWeek = dayOfWeekFromDate(row.lecture_date);
+      const startTime = formatClockTime(row.start_time);
+      const endTime = formatClockTime(row.end_time);
+      const timeRange = formatTimeRange(row.start_time, row.end_time);
+      const attendEndMinute = parseOptionalInteger(row.attend_emin);
+      const lateEndMinute = parseOptionalInteger(row.later_min);
+
+      if (
+        week <= 0 ||
+        classNo <= 0 ||
+        !date ||
+        !dateLabel ||
+        dayOfWeek === undefined ||
+        !startTime ||
+        !endTime ||
+        !timeRange ||
+        attendEndMinute === undefined
+      ) {
+        warnings.push(
+          `${lecture.courseTitle}(${lecture.lectureNo}) ${week || "?"}-${classNo || "?"} 회차 알림 기준 필드 부족`
+        );
+        continue;
+      }
+
+      // Product policy: never schedule before class start. If attend_emin is 5
+      // and leadMinutes is 5, alert exactly at start.
+      const alertAfterStartMinute = Math.max(attendEndMinute - leadMinutes, 0);
+      const startMinutes = parseClockMinutes(startTime);
+      const alertTotalMinutes = startMinutes + alertAfterStartMinute;
+      const alertDayOffset = Math.trunc(alertTotalMinutes / 1440);
+      const cronDayOfWeek = (dayOfWeek + alertDayOffset) % 7;
+      const alertTime = formatClockMinutes(alertTotalMinutes);
+      const scheduleSegment = matchScheduleSegment(lecture, timeRange, row.lecture_date);
+      const attendStartMinute = parseOptionalInteger(row.attend_smin) ?? 0;
+      const leaveStartMinute = parseOptionalInteger(row.out_smin);
+      const leaveEndMinute = parseOptionalInteger(row.out_emin);
+      const session: UcheckAttendanceAlertSession = {
+        lectureNo: lecture.lectureNo,
+        courseCode: lecture.courseCode,
+        courseTitle: lecture.courseTitle,
+        ...(lecture.classCode ? { classCode: lecture.classCode } : {}),
+        ...(lecture.professor ? { professor: lecture.professor } : {}),
+        dayOfWeek,
+        dayLabel: DAY_LABELS[dayOfWeek] ?? "",
+        startTime,
+        endTime,
+        timeRange,
+        ...(scheduleSegment?.classroom ? { classroom: scheduleSegment.classroom } : {}),
+        attendStartMinute,
+        attendEndMinute,
+        ...(lateEndMinute !== undefined ? { lateEndMinute } : {}),
+        ...(leaveStartMinute !== undefined ? { leaveStartMinute } : {}),
+        ...(leaveEndMinute !== undefined ? { leaveEndMinute } : {}),
+        alertAfterStartMinute,
+        alertTime,
+        cronDayOfWeek,
+        sessionCount: 1,
+        week,
+        classNo,
+        sessionLabel: `${week}-${subClassNo}`,
+        date,
+        dateLabel
+      };
+
+      sessions.push(session);
+
+      const key = [
+        lecture.lectureNo,
+        cronDayOfWeek,
+        alertTime,
+        startTime,
+        endTime,
+        attendEndMinute
+      ].join(":");
+      const existing = schedulesByKey.get(key);
+      if (existing) {
+        existing.sessionCount += 1;
+        continue;
+      }
+
+      schedulesByKey.set(key, {
+        lectureNo: session.lectureNo,
+        courseCode: session.courseCode,
+        courseTitle: session.courseTitle,
+        ...(session.classCode ? { classCode: session.classCode } : {}),
+        ...(session.professor ? { professor: session.professor } : {}),
+        dayOfWeek: session.dayOfWeek,
+        dayLabel: session.dayLabel,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        timeRange: session.timeRange,
+        ...(session.classroom ? { classroom: session.classroom } : {}),
+        attendStartMinute: session.attendStartMinute,
+        attendEndMinute: session.attendEndMinute,
+        ...(session.lateEndMinute !== undefined
+          ? { lateEndMinute: session.lateEndMinute }
+          : {}),
+        ...(session.leaveStartMinute !== undefined
+          ? { leaveStartMinute: session.leaveStartMinute }
+          : {}),
+        ...(session.leaveEndMinute !== undefined
+          ? { leaveEndMinute: session.leaveEndMinute }
+          : {}),
+        alertAfterStartMinute: session.alertAfterStartMinute,
+        alertTime: session.alertTime,
+        cronDayOfWeek: session.cronDayOfWeek,
+        sessionCount: 1
+      });
+    }
+  }
+
+  const schedules = [...schedulesByKey.values()].sort(
+    (a, b) =>
+      a.cronDayOfWeek - b.cronDayOfWeek ||
+      a.alertTime.localeCompare(b.alertTime) ||
+      a.courseTitle.localeCompare(b.courseTitle)
+  );
+  sessions.sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.startTime.localeCompare(b.startTime) ||
+      a.courseTitle.localeCompare(b.courseTitle)
+  );
+
+  return {
+    year,
+    term,
+    leadMinutes,
+    generatedAt: new Date().toISOString(),
+    schedules,
+    sessions,
+    warnings
+  };
 }
 
 function resolveLectureFromList(
