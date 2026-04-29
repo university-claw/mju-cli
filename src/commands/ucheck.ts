@@ -8,6 +8,7 @@ import { MjuUcheckClient } from "../ucheck/client.js";
 import { resolveUcheckRuntimeConfig } from "../ucheck/config.js";
 import {
   getUcheckAccountInfo,
+  getUcheckAttendanceAlertPlan,
   getUcheckCourseAttendance,
   listUcheckLectures
 } from "../ucheck/services.js";
@@ -17,12 +18,12 @@ function parseOptionalInt(value: string | undefined, label: string): number | un
     return undefined;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) {
+  const normalized = value.trim();
+  if (!/^-?\d+$/.test(normalized)) {
     throw new Error(`${label} 는 정수여야 합니다.`);
   }
 
-  return parsed;
+  return Number.parseInt(normalized, 10);
 }
 
 async function createUcheckClientWithCredentials(globals: GlobalOptions): Promise<{
@@ -50,7 +51,8 @@ export function createUcheckCommand(getGlobals: () => GlobalOptions): Command {
           implemented: {
             account: ["get"],
             lectures: ["list"],
-            attendance: ["get"]
+            attendance: ["get"],
+            "alert-plan": ["get"]
           },
           planned: {}
         },
@@ -115,6 +117,36 @@ export function createUcheckCommand(getGlobals: () => GlobalOptions): Command {
           ...(lectureNo !== undefined ? { lectureNo } : {}),
           ...(year !== undefined ? { year } : {}),
           ...(term !== undefined ? { term } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
+
+  ucheck
+    .command("alert-plan")
+    .description("Build attendance alert schedule from UCheck rules")
+    .option("--year <year>", "target lecture year")
+    .option("--term <term>", "target lecture term")
+    .option("--lead-minutes <minutes>", "minutes before attendance cutoff", "5")
+    .action(
+      async (options: {
+        year?: string;
+        term?: string;
+        leadMinutes?: string;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createUcheckClientWithCredentials(globals);
+        const year = parseOptionalInt(options.year, "year");
+        const term = parseOptionalInt(options.term, "term");
+        const leadMinutes = parseOptionalInt(options.leadMinutes, "lead-minutes") ?? 5;
+        if (leadMinutes < 0) {
+          throw new Error("lead-minutes 는 0 이상이어야 합니다.");
+        }
+        const result = await getUcheckAttendanceAlertPlan(client, credentials, {
+          ...(year !== undefined ? { year } : {}),
+          ...(term !== undefined ? { term } : {}),
+          leadMinutes
         });
 
         printData(result, globals.format);
