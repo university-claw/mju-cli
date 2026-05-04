@@ -46,6 +46,47 @@ export interface UcheckAttendanceSession {
   leaveAt?: string;
 }
 
+export interface UcheckAttendanceAlertSchedule {
+  lectureNo: number;
+  courseCode: string;
+  courseTitle: string;
+  classCode?: string;
+  professor?: string;
+  dayOfWeek: number;
+  dayLabel: string;
+  startTime: string;
+  endTime: string;
+  timeRange: string;
+  classroom?: string;
+  attendStartMinute: number;
+  attendEndMinute: number;
+  lateEndMinute?: number;
+  leaveStartMinute?: number;
+  leaveEndMinute?: number;
+  alertAfterStartMinute: number;
+  alertTime: string;
+  cronDayOfWeek: number;
+  sessionCount: number;
+}
+
+export interface UcheckAttendanceAlertSession extends UcheckAttendanceAlertSchedule {
+  week: number;
+  classNo: number;
+  sessionLabel: string;
+  date: string;
+  dateLabel: string;
+}
+
+export interface UcheckAttendanceAlertPlanResult {
+  year: number;
+  term: number;
+  leadMinutes: number;
+  generatedAt: string;
+  schedules: UcheckAttendanceAlertSchedule[];
+  sessions: UcheckAttendanceAlertSession[];
+  warnings: string[];
+}
+
 export interface UcheckCourseAttendanceResult {
   studentNo?: string;
   studentName: string;
