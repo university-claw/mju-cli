@@ -16,7 +16,8 @@
     "docs:skills": "node scripts/generate-skills-doc.mjs",
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
-    "migrate": "tsx src/main.ts migrate"
+    "migrate": "tsx src/main.ts migrate",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

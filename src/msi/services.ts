@@ -6,6 +6,10 @@ import { MSI_BASE } from "./constants.js";
 import { openMsiMenu } from "./menu.js";
 import type {
   MsiCreditBucket,
+  MsiCourseScoreCourse,
+  MsiCourseScoreItem,
+  MsiCourseScoresResult,
+  MsiCourseScoreTermOption,
   MsiCurrentGradeItem,
   MsiCurrentGradesResult,
   MsiGradeHistoryCourse,
@@ -16,6 +20,7 @@ import type {
   MsiGraduationCreditItem,
   MsiGraduationRequirementsResult,
   MsiMenuSpec,
+  MsiScoreValue,
   MsiTimetableEntry,
   MsiTimetableResult,
   MsiTimetableTermOption
@@ -33,6 +38,13 @@ export const MSI_CURRENT_GRADES_MENU: MsiMenuSpec = {
   urlPath: "/servlet/su/suh/Suh00Svl01showCurrentGrade",
   folderDiv: "104",
   pgmid: "W_SUH005"
+};
+
+export const MSI_COURSE_SCORES_MENU: MsiMenuSpec = {
+  name: "수강점수조회",
+  urlPath: "/servlet/su/suh/Suh00Svl01initScoreView",
+  folderDiv: "104",
+  pgmid: "W_SUH010"
 };
 
 export const MSI_GRADE_HISTORY_MENU: MsiMenuSpec = {
@@ -265,6 +277,138 @@ function parseCurrentGradesPage(html: string): MsiCurrentGradesResult {
   return {
     ...extractCurrentGradesTitleMeta(html),
     items
+  };
+}
+
+function parseScoreValue(value: string | undefined): MsiScoreValue {
+  const rawValue = cleanText(value);
+  const result: MsiScoreValue = { rawValue };
+  const pairMatch = /^(.+?)\s*\/\s*(.+?)(?:\s*(?:%|점))?$/.exec(rawValue);
+
+  if (pairMatch) {
+    const earned = parseNumber(pairMatch[1]);
+    const total = parseNumber(pairMatch[2]);
+    if (earned !== undefined) {
+      result.earned = earned;
+    }
+    if (total !== undefined) {
+      result.total = total;
+    }
+    return result;
+  }
+
+  const parsed = parseNumber(rawValue);
+  if (parsed !== undefined) {
+    result.value = parsed;
+  }
+
+  return result;
+}
+
+function parseCourseScoreTermOptions(html: string): MsiCourseScoreTermOption[] {
+  const $ = load(html);
+
+  return $('form[name="form1"] select[name="smt"] option')
+    .map((_, element) => ({
+      code: cleanText($(element).attr("value") ?? ""),
+      label: cleanText($(element).text()),
+      selected: $(element).is("[selected]") || $(element).is(":selected")
+    }))
+    .get();
+}
+
+function parseCourseScoreTitle(title: string): {
+  courseCode?: string;
+  courseTitle: string;
+} {
+  const match = /^(.+?)\s*-\s*(.+)$/.exec(title);
+  if (!match) {
+    return { courseTitle: title };
+  }
+
+  return {
+    courseCode: cleanText(match[1]),
+    courseTitle: cleanText(match[2])
+  };
+}
+
+function parseCourseScoreItems(cardHtml: string): MsiCourseScoreItem[] {
+  const $ = load(cardHtml);
+  const items: MsiCourseScoreItem[] = [];
+  let currentAssessmentCategory = "";
+
+  $("table tbody tr").each((_, row) => {
+    const cells = $(row).find("td");
+    if (cells.length < 5) {
+      return;
+    }
+
+    const firstCell = cells.eq(0);
+    const hasAssessmentCategoryCell =
+      cells.length >= 6 || firstCell.attr("rowspan") !== undefined;
+    const assessmentCategory = hasAssessmentCategoryCell
+      ? cleanText(firstCell.text())
+      : currentAssessmentCategory;
+    const offset = hasAssessmentCategoryCell ? 1 : 0;
+    const itemName = cleanText(cells.eq(offset).text());
+
+    if (!assessmentCategory && !itemName) {
+      return;
+    }
+    if (assessmentCategory) {
+      currentAssessmentCategory = assessmentCategory;
+    }
+
+    const note = cleanText(cells.eq(offset + 4).text());
+    const item: MsiCourseScoreItem = {
+      assessmentCategory,
+      itemName,
+      ratio: parseScoreValue(cells.eq(offset + 1).text()),
+      rawScore: parseScoreValue(cells.eq(offset + 2).text()),
+      averageScore: parseScoreValue(cells.eq(offset + 3).text())
+    };
+    if (note) {
+      item.note = note;
+    }
+
+    items.push(item);
+  });
+
+  return items;
+}
+
+export function parseMsiCourseScoresPage(html: string): MsiCourseScoresResult {
+  const $ = load(html);
+  const year = parseInteger(
+    $('form[name="form1"] input[name="year"]').first().attr("value")
+  );
+  const termOptions = parseCourseScoreTermOptions(html);
+  const selectedTerm = termOptions.find((option) => option.selected) ?? termOptions[0];
+  const courses: MsiCourseScoreCourse[] = $(".card-item.basic")
+    .map((_, card) => {
+      const title = cleanText($(card).children(".data-title").first().text());
+      if (!title || $(card).find("table").length === 0) {
+        return null;
+      }
+
+      const titleParts = parseCourseScoreTitle(title);
+      const course: MsiCourseScoreCourse = {
+        title,
+        ...titleParts,
+        items: parseCourseScoreItems($(card).html() ?? "")
+      };
+
+      return course;
+    })
+    .get()
+    .filter((course): course is MsiCourseScoreCourse => course !== null);
+
+  return {
+    year: year ?? 0,
+    termCode: selectedTerm?.code ?? "",
+    termLabel: selectedTerm?.label ?? "",
+    termOptions,
+    courses
   };
 }
 
@@ -567,6 +711,64 @@ function extractFormFields(html: string, selector: string): {
   return { action, fields };
 }
 
+function resolveMsiFormAction(action: string, context: string): string {
+  const url = new URL(action, MSI_BASE);
+  if (url.protocol !== "https:" || url.hostname !== "msi.mju.ac.kr") {
+    throw new Error(`${context} form action이 MSI 도메인이 아닙니다.`);
+  }
+
+  return url.toString();
+}
+
+export function isMsiCourseScoresPage(html: string): boolean {
+  const $ = load(html);
+  const form = $('form[name="form1"]').first();
+  const action = cleanText(form.attr("action") ?? "");
+
+  return (
+    form.find('input[name="year"]').length > 0 &&
+    action.includes("/servlet/su/suh/Suh00Svl01initScoreView")
+  );
+}
+
+function assertMsiCourseScoresPage(html: string, context: string): void {
+  if (!isMsiCourseScoresPage(html)) {
+    throw new Error(`${context} 결과가 MSI 수강점수조회 화면이 아닙니다.`);
+  }
+}
+
+function assertSuccessfulResponse(
+  response: { statusCode: number },
+  context: string
+): void {
+  if (response.statusCode >= 400) {
+    throw new Error(`${context} 요청에 실패했습니다. HTTP ${response.statusCode}`);
+  }
+}
+
+export async function submitMsiFormQuery(
+  client: Pick<MjuMsiClient, "postForm">,
+  html: string,
+  options: {
+    year?: number;
+    termCode?: string | number;
+    context: string;
+    validatePage?: (html: string) => void;
+  }
+): Promise<string> {
+  const { action, fields } = extractFormFields(html, 'form[name="form1"]');
+  const response = await client.postForm(resolveMsiFormAction(action, options.context), {
+    ...fields,
+    ...(options.year !== undefined ? { year: String(options.year) } : {}),
+    ...(options.termCode !== undefined ? { smt: String(options.termCode) } : {})
+  });
+
+  assertSuccessfulResponse(response, options.context);
+  options.validatePage?.(response.text);
+
+  return response.text;
+}
+
 export async function getMsiTimetable(
   client: MjuMsiClient,
   credentials: ResolvedLmsCredentials,
@@ -579,13 +781,11 @@ export async function getMsiTimetable(
   let currentHtml = pageResponse.text;
 
   if (options.year !== undefined || options.termCode !== undefined) {
-    const { action, fields } = extractFormFields(currentHtml, 'form[name="form1"]');
-    const queryResponse = await client.postForm(new URL(action, MSI_BASE).toString(), {
-      ...fields,
-      ...(options.year !== undefined ? { year: String(options.year) } : {}),
-      ...(options.termCode !== undefined ? { smt: String(options.termCode) } : {})
+    currentHtml = await submitMsiFormQuery(client, currentHtml, {
+      ...(options.year !== undefined ? { year: options.year } : {}),
+      ...(options.termCode !== undefined ? { termCode: options.termCode } : {}),
+      context: "MSI 시간표"
     });
-    currentHtml = queryResponse.text;
   }
 
   return parseTimetablePage(currentHtml);
@@ -597,6 +797,30 @@ export async function getMsiCurrentTermGrades(
 ): Promise<MsiCurrentGradesResult> {
   const { pageResponse } = await openMsiMenu(client, credentials, MSI_CURRENT_GRADES_MENU);
   return parseCurrentGradesPage(pageResponse.text);
+}
+
+export async function getMsiCourseScores(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    year?: number;
+    termCode?: string;
+  } = {}
+): Promise<MsiCourseScoresResult> {
+  const { pageResponse } = await openMsiMenu(client, credentials, MSI_COURSE_SCORES_MENU);
+  let currentHtml = pageResponse.text;
+  assertMsiCourseScoresPage(currentHtml, "MSI 수강점수조회");
+
+  if (options.year !== undefined || options.termCode !== undefined) {
+    currentHtml = await submitMsiFormQuery(client, currentHtml, {
+      ...(options.year !== undefined ? { year: options.year } : {}),
+      ...(options.termCode !== undefined ? { termCode: options.termCode } : {}),
+      context: "MSI 수강점수조회",
+      validatePage: (html) => assertMsiCourseScoresPage(html, "MSI 수강점수조회")
+    });
+  }
+
+  return parseMsiCourseScoresPage(currentHtml);
 }
 
 export async function getMsiGradeHistory(

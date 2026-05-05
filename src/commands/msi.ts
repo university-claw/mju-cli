@@ -5,6 +5,7 @@ import { resolveLmsRuntimeConfig } from "../lms/config.js";
 import { MjuMsiClient } from "../msi/client.js";
 import { resolveMsiRuntimeConfig } from "../msi/config.js";
 import {
+  getMsiCourseScores,
   getMsiCurrentTermGrades,
   getMsiGradeHistory,
   getMsiGraduationRequirements,
@@ -52,7 +53,7 @@ export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
           service: "msi",
           implemented: {
             timetable: ["get"],
-            grades: ["current", "history"],
+            grades: ["current", "history", "course-scores"],
             graduation: ["requirements"]
           },
           planned: {}
@@ -86,6 +87,23 @@ export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
       const globals = getGlobals();
       const { client, credentials } = await createMsiClientWithCredentials(globals);
       const result = await getMsiCurrentTermGrades(client, credentials);
+      printData(result, globals.format);
+    });
+
+  msi
+    .command("course-scores")
+    .description("Get in-progress course scores")
+    .option("--year <year>", "target year")
+    .option("--term-code <code>", "target term code")
+    .action(async (options: { year?: string; termCode?: string }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createMsiClientWithCredentials(globals);
+      const year = parseOptionalInt(options.year, "year");
+      const result = await getMsiCourseScores(client, credentials, {
+        ...(year !== undefined ? { year } : {}),
+        ...(options.termCode !== undefined ? { termCode: options.termCode } : {})
+      });
+
       printData(result, globals.format);
     });
 
