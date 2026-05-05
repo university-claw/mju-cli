@@ -4,9 +4,12 @@ import { AuthManager } from "../auth/auth-manager.js";
 import { resolveLmsRuntimeConfig } from "../lms/config.js";
 import { printData } from "../output/print.js";
 import type { GlobalOptions } from "../types.js";
+import { createMigrateUsersCommand } from "./migrate-users.js";
 
 export function createAuthCommand(getGlobals: () => GlobalOptions): Command {
   const auth = new Command("auth").description("Authenticate and manage saved LMS credentials");
+
+  auth.addCommand(createMigrateUsersCommand(getGlobals));
 
   auth
     .command("login")

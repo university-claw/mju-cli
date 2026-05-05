@@ -11,7 +11,11 @@ import type { LmsRuntimeConfig } from "./config.js";
 import { MAIN_URL, SSO_BASE, SSO_ENTRY } from "./constants.js";
 import { extractCourseCandidates } from "./course-links.js";
 import { decodeHtml } from "./encoding.js";
-import { SessionStore } from "./session-store.js";
+import {
+  createLmsSessionStore,
+  resolveStorageContext
+} from "../storage/resolver.js";
+import type { LmsSessionStorage } from "../storage/types.js";
 import {
   encryptPasswordForSso,
   encryptSessionKeyForSso,
@@ -48,10 +52,13 @@ function toBinaryResponse(response: Response<Buffer>): BinaryResponse {
 export class MjuLmsSsoClient {
   private cookieJar = new CookieJar();
   private http;
-  private readonly sessionStore: SessionStore;
+  private readonly sessionStore: LmsSessionStorage;
 
   constructor(private readonly config: LmsRuntimeConfig) {
-    this.sessionStore = new SessionStore(config.sessionFile);
+    this.sessionStore = createLmsSessionStore(
+      resolveStorageContext(config.appDataDir),
+      config.sessionFile
+    );
     this.http = this.buildHttpClient();
   }
 

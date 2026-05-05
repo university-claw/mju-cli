@@ -8,7 +8,11 @@ import { CookieJar } from "tough-cookie";
 
 import type { DecodedResponse, SsoForm } from "../lms/types.js";
 import { decodeHtml } from "../lms/encoding.js";
-import { SessionStore } from "../lms/session-store.js";
+import {
+  createCookieSessionStore,
+  resolveStorageContext
+} from "../storage/resolver.js";
+import type { LmsSessionStorage } from "../storage/types.js";
 import {
   encryptPasswordForSso,
   encryptSessionKeyForSso,
@@ -36,10 +40,14 @@ function toDecodedResponse(response: Response<Buffer>): DecodedResponse {
 export class MjuUcheckClient {
   private cookieJar = new CookieJar();
   private http;
-  private readonly sessionStore: SessionStore;
+  private readonly sessionStore: LmsSessionStorage;
 
   constructor(private readonly config: UcheckRuntimeConfig) {
-    this.sessionStore = new SessionStore(config.sessionFile);
+    this.sessionStore = createCookieSessionStore(
+      resolveStorageContext(config.appDataDir),
+      "ucheck",
+      config.sessionFile
+    );
     this.http = this.buildHttpClient();
   }
 

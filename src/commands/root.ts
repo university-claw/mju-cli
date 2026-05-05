@@ -7,6 +7,7 @@ import { createConfigCommand } from "./config.js";
 import { createDoctorCommand } from "./doctor.js";
 import { createLibraryCommand } from "./library.js";
 import { createLmsCommand } from "./lms.js";
+import { createMigrateCommand } from "./migrate.js";
 import { createMsiCommand } from "./msi.js";
 import { createServiceCommands } from "./services.js";
 import { createSkillsCommand } from "./skills.js";
@@ -30,6 +31,7 @@ export function createRootCommand(): Command {
   program.addCommand(createDoctorCommand(getGlobals));
   program.addCommand(createLibraryCommand(getGlobals));
   program.addCommand(createLmsCommand(getGlobals));
+  program.addCommand(createMigrateCommand(getGlobals));
   program.addCommand(createMsiCommand(getGlobals));
   program.addCommand(createSkillsCommand(getGlobals));
   program.addCommand(createUcheckCommand(getGlobals));

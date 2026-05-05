@@ -6,7 +6,11 @@ import {
   LIBRARY_HOMEPAGE_ID
 } from "./constants.js";
 import type { LibraryRuntimeConfig } from "./config.js";
-import { LibrarySessionStore } from "./session-store.js";
+import {
+  createLibrarySessionStore,
+  resolveStorageContext
+} from "../storage/resolver.js";
+import type { LibrarySessionStorage } from "../storage/types.js";
 import type { LibraryApiEnvelope, LibrarySessionPayload } from "./types.js";
 
 interface JsonRequestOptions {
@@ -43,12 +47,15 @@ function isSuccessfulEnvelope(
 export class MjuLibraryClient {
   private readonly http;
 
-  private readonly sessionStore: LibrarySessionStore;
+  private readonly sessionStore: LibrarySessionStorage;
 
   private accessToken: string | undefined;
 
   constructor(private readonly config: LibraryRuntimeConfig) {
-    this.sessionStore = new LibrarySessionStore(config.sessionFile);
+    this.sessionStore = createLibrarySessionStore(
+      resolveStorageContext(config.appDataDir),
+      config.sessionFile
+    );
     this.http = got.extend({
       followRedirect: true,
       throwHttpErrors: false,
