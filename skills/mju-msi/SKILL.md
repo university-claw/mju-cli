@@ -19,5 +19,7 @@ metadata:
 - 시간표 조회: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi timetable`
   - 선택 옵션: `--year <연도> --term-code <학기코드>`
 - 현재 학기 성적: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi current-grades`
+- 학기 중 수강점수: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi course-scores`
+  - 선택 옵션: `--year <연도> --term-code <학기코드>`
 - 전체 성적 이력: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi grade-history`
 - 졸업 요건: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi graduation`

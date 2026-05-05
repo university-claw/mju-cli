@@ -72,8 +72,8 @@ export const SERVICES: ServiceSpec[] = [
       },
       {
         name: "grades",
-        description: "Read grades and history",
-        actions: ["current", "history"]
+        description: "Read grades, in-progress course scores, and history",
+        actions: ["current", "history", "course-scores"]
       },
       {
         name: "graduation",
