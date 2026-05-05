@@ -69,6 +69,43 @@ export interface MsiCurrentGradesResult {
   items: MsiCurrentGradeItem[];
 }
 
+export interface MsiCourseScoreTermOption {
+  code: string;
+  label: string;
+  selected: boolean;
+}
+
+export interface MsiScoreValue {
+  rawValue: string;
+  earned?: number;
+  total?: number;
+  value?: number;
+}
+
+export interface MsiCourseScoreItem {
+  assessmentCategory: string;
+  itemName: string;
+  ratio: MsiScoreValue;
+  rawScore: MsiScoreValue;
+  averageScore: MsiScoreValue;
+  note?: string;
+}
+
+export interface MsiCourseScoreCourse {
+  title: string;
+  courseCode?: string;
+  courseTitle: string;
+  items: MsiCourseScoreItem[];
+}
+
+export interface MsiCourseScoresResult {
+  year: number;
+  termCode: string;
+  termLabel: string;
+  termOptions: MsiCourseScoreTermOption[];
+  courses: MsiCourseScoreCourse[];
+}
+
 export interface MsiCreditBucket {
   label: string;
   credits?: number;
