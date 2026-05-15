@@ -10,6 +10,7 @@ export interface StoredAuthProfile {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string;
+  preferredName?: string;
 }
 
 export interface ResolvedLmsCredentials {

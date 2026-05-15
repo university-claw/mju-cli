@@ -119,7 +119,10 @@ export class AuthManager {
       createdAt:
         existingProfile?.userId === normalizedUserId ? existingProfile.createdAt : now,
       updatedAt: now,
-      lastLoginAt: now
+      lastLoginAt: now,
+      ...(existingProfile?.preferredName?.trim()
+        ? { preferredName: existingProfile.preferredName.trim() }
+        : {})
     };
 
     await this.profileStore.save(profile);
