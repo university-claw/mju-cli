@@ -87,6 +87,13 @@ const SKILL_SEEDS: SkillCatalogSeed[] = [
     requires: ["mju-shared", "mju-library"]
   },
   {
+    name: "mju-library-study-room-reserve",
+    kind: "helper",
+    service: "library",
+    description: "스터디룸 예약 후보를 찾고 preview 후 예약과 검증까지 수행하는 helper skill",
+    requires: ["mju-shared", "mju-library"]
+  },
+  {
     name: "recipe-mju-check-today",
     kind: "recipe",
     description: "오늘 처리할 LMS 액션과 도서관 예약 상황을 함께 확인하는 daily recipe",
