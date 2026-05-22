@@ -52,6 +52,25 @@ export interface MsiTimetableResult {
   entries: MsiTimetableEntry[];
 }
 
+export interface MsiLastClassDay {
+  dayOfWeek: number;
+  dayLabel: string;
+  courseTitle: string;
+  location?: string;
+  professor?: string;
+  endTime: string;
+  timeRange: string;
+}
+
+export interface MsiLastClassTimesResult {
+  year: number;
+  termCode: string;
+  termLabel: string;
+  generatedAt: string;
+  days: MsiLastClassDay[];
+  warnings: string[];
+}
+
 export interface MsiCurrentGradeItem {
   courseCode?: string;
   courseClass?: string;
