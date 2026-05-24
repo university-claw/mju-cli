@@ -26,6 +26,11 @@ import {
 } from "../lms/helpers.js";
 import { getCourseMaterial, listCourseMaterials } from "../lms/materials.js";
 import { getCourseNotice, listCourseNotices } from "../lms/notices.js";
+import { getOnlineInsights, type OnlineInsightType } from "../lms/online-insights.js";
+import {
+  getOnlinePlainTranscript,
+  getOnlineSummary
+} from "../lms/online-transcript.js";
 import { getCourseOnlineWeek, listCourseOnlineWeeks } from "../lms/online.js";
 import { watchCourseOnlineItem } from "../lms/online-watch.js";
 import { MjuLmsSsoClient } from "../lms/sso-client.js";
@@ -78,6 +83,28 @@ function parsePositiveIntList(value: string | undefined, label: string): number[
   });
 }
 
+const INSIGHT_TYPES = [
+  "exam-candidate",
+  "assignment",
+  "practice",
+  "important"
+] as const satisfies readonly OnlineInsightType[];
+
+function parseInsightTypes(value: string | undefined): OnlineInsightType[] | undefined {
+  const items = parseCommaSeparatedList(value);
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return items.map((item) => {
+    if (INSIGHT_TYPES.includes(item as OnlineInsightType)) {
+      return item as OnlineInsightType;
+    }
+
+    throw new Error(`types 는 ${INSIGHT_TYPES.join(", ")} 중 쉼표로 구분해야 합니다.`);
+  });
+}
+
 function parseNonNegativeInt(value: string | undefined, label: string): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -127,7 +154,7 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
             notices: ["list", "get"],
             materials: ["list", "get"],
             assignments: ["list", "get", "check-submission"],
-            online: ["list", "get", "watch"],
+            online: ["list", "get", "summary", "transcript", "insights", "watch"],
             attachments: ["download", "download-bulk"],
             helpers: [
               "+unsubmitted",
@@ -445,6 +472,156 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
 
       printData(result, globals.format);
     });
+
+  online
+    .command("summary")
+    .description("Get only the LMS-provided summary for one online video")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--lecture-weeks <id>", "online learning lecture_weeks")
+    .option("--link-seq <id>", "specific online learning item link_seq")
+    .option("--item-index <index>", "0-based online learning item index")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        lectureWeeks: string;
+        linkSeq?: string;
+        itemIndex?: string;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createLmsClientWithCredentials(globals);
+        const resolvedCourse = await resolveCourseReference(client, credentials, {
+          course: options.course,
+          kjkey: options.kjkey
+        });
+        const lectureWeeks = parseOptionalInt(options.lectureWeeks, "lecture-weeks");
+        if (lectureWeeks === undefined) {
+          throw new Error("lecture-weeks 는 필수입니다.");
+        }
+
+        const linkSeq = parseOptionalInt(options.linkSeq, "link-seq");
+        const itemIndex = parseNonNegativeInt(options.itemIndex, "item-index");
+        const result = await getOnlineSummary(client, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: resolvedCourse.kjkey,
+          lectureWeeks,
+          ...(linkSeq !== undefined ? { linkSeq } : {}),
+          ...(itemIndex !== undefined ? { itemIndex } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
+
+  online
+    .command("transcript")
+    .description("Get only the generated subtitle plain text for one online video")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--lecture-weeks <id>", "online learning lecture_weeks")
+    .option("--link-seq <id>", "specific online learning item link_seq")
+    .option("--item-index <index>", "0-based online learning item index")
+    .option("--language <code>", "subtitle language code, e.g. KO, EN, CH, VI", "KO")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        lectureWeeks: string;
+        linkSeq?: string;
+        itemIndex?: string;
+        language?: string;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createLmsClientWithCredentials(globals);
+        const resolvedCourse = await resolveCourseReference(client, credentials, {
+          course: options.course,
+          kjkey: options.kjkey
+        });
+        const lectureWeeks = parseOptionalInt(options.lectureWeeks, "lecture-weeks");
+        if (lectureWeeks === undefined) {
+          throw new Error("lecture-weeks 는 필수입니다.");
+        }
+
+        const linkSeq = parseOptionalInt(options.linkSeq, "link-seq");
+        const itemIndex = parseNonNegativeInt(options.itemIndex, "item-index");
+        const result = await getOnlinePlainTranscript(client, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: resolvedCourse.kjkey,
+          lectureWeeks,
+          ...(linkSeq !== undefined ? { linkSeq } : {}),
+          ...(itemIndex !== undefined ? { itemIndex } : {}),
+          ...(options.language ? { language: options.language } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
+
+  online
+    .command("insights")
+    .description("Find important exam, assignment, practice, and emphasis signals from online subtitles")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--lecture-weeks <id>", "online learning lecture_weeks")
+    .option("--link-seq <id>", "specific online learning item link_seq")
+    .option("--item-index <index>", "0-based online learning item index")
+    .option("--language <code>", "subtitle language code, e.g. KO, EN, CH, VI", "KO")
+    .option(
+      "--types <types>",
+      "comma-separated: exam-candidate,assignment,practice,important"
+    )
+    .option("--max-items <count>", "max highlighted items per type")
+    .option("--show-score", "include internal rule scores for debugging")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        lectureWeeks: string;
+        linkSeq?: string;
+        itemIndex?: string;
+        language?: string;
+        types?: string;
+        maxItems?: string;
+        showScore?: boolean;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createLmsClientWithCredentials(globals);
+        const resolvedCourse = await resolveCourseReference(client, credentials, {
+          course: options.course,
+          kjkey: options.kjkey
+        });
+        const lectureWeeks = parseOptionalInt(options.lectureWeeks, "lecture-weeks");
+        if (lectureWeeks === undefined) {
+          throw new Error("lecture-weeks 는 필수입니다.");
+        }
+
+        const linkSeq = parseOptionalInt(options.linkSeq, "link-seq");
+        const itemIndex = parseNonNegativeInt(options.itemIndex, "item-index");
+        const maxItems = parseOptionalInt(options.maxItems, "max-items");
+        if (maxItems !== undefined && maxItems <= 0) {
+          throw new Error("max-items 는 1 이상의 정수여야 합니다.");
+        }
+
+        const types = parseInsightTypes(options.types);
+        const result = await getOnlineInsights(client, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: resolvedCourse.kjkey,
+          lectureWeeks,
+          ...(linkSeq !== undefined ? { linkSeq } : {}),
+          ...(itemIndex !== undefined ? { itemIndex } : {}),
+          ...(options.language ? { language: options.language } : {}),
+          ...(types ? { types } : {}),
+          ...(maxItems !== undefined ? { maxItemsPerType: maxItems } : {}),
+          ...(options.showScore ? { showScore: true } : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
 
   online
     .command("watch")
