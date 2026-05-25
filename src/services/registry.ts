@@ -79,6 +79,11 @@ export const SERVICES: ServiceSpec[] = [
         name: "graduation",
         description: "Read graduation requirement status",
         actions: ["requirements"]
+      },
+      {
+        name: "lecture-evaluations",
+        description: "List, preview, and submit MSI lecture evaluations",
+        actions: ["list", "preview", "submit"]
       }
     ],
     helpers: []
