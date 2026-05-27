@@ -10,6 +10,7 @@ import { createLmsCommand } from "./lms.js";
 import { createMigrateCommand } from "./migrate.js";
 import { createMsiCommand } from "./msi.js";
 import { createProfileCommand } from "./profile.js";
+import { createSafetyCommand } from "./safety.js";
 import { createServiceCommands } from "./services.js";
 import { createSkillsCommand } from "./skills.js";
 import { createUcheckCommand } from "./ucheck.js";
@@ -35,6 +36,7 @@ export function createRootCommand(): Command {
   program.addCommand(createMigrateCommand(getGlobals));
   program.addCommand(createMsiCommand(getGlobals));
   program.addCommand(createProfileCommand(getGlobals));
+  program.addCommand(createSafetyCommand(getGlobals));
   program.addCommand(createSkillsCommand(getGlobals));
   program.addCommand(createUcheckCommand(getGlobals));
 
