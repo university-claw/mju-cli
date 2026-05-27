@@ -81,3 +81,34 @@ test("parseMsiLectureEvaluationPage extracts targets and satisfaction choices", 
     }
   });
 });
+
+test("parseMsiLectureEvaluationPage follows savePage action overrides", () => {
+  const result = parseMsiLectureEvaluationPage(
+    `
+      <form name="form1" action="/servlet/su/sug/Sug00Svl02initDeptSatis" method="post">
+        <h2>교육만족도 조사</h2>
+        <input type="hidden" name="year" value="2026" />
+        <input type="hidden" name="smt" value="10" />
+        <label><input type="radio" name="item1" value="1" /> 전혀 그렇지 않다</label>
+        <label><input type="radio" name="item1" value="2" /> 그렇지 않다</label>
+        <label><input type="radio" name="item1" value="3" /> 보통이다</label>
+        <label><input type="radio" name="item1" value="4" /> 그렇다</label>
+        <label><input type="radio" name="item1" value="5" /> 매우 그렇다</label>
+        <a href="javascript:savePage();">저장</a>
+      </form>
+      <script>
+        function savePage() {
+          var form = document.form1;
+          form.action='/servlet/su/sug/Sug00Svl02setDeptSatis';
+          form.submit();
+        }
+      </script>
+    `,
+    { menuName: "강의평가" }
+  );
+
+  assert.equal(
+    result.targets[0]?.submitUrl,
+    "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02setDeptSatis"
+  );
+});

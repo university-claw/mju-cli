@@ -228,6 +228,7 @@ export interface MsiLectureEvaluationSubmitItem {
   variant: MsiLectureEvaluationVariant;
   submitted: boolean;
   statusCode?: number;
+  verification?: Record<string, unknown>;
   skippedReason?: string;
 }
 

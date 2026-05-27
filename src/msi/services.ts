@@ -1030,6 +1030,14 @@ function targetIdFromFields(
   return fallback;
 }
 
+function extractLectureEvaluationSaveAction(html: string): string | undefined {
+  const match =
+    /(?:form|document\.form1)\.action\s*=\s*['"]([^'"]*Svl02[^'"]*)['"]/i.exec(html) ??
+    /action\s*=\s*['"]([^'"]*Svl02set[^'"]*)['"]/i.exec(html);
+
+  return match?.[1];
+}
+
 export function parseMsiLectureEvaluationPage(
   html: string,
   options: { menuName?: string; pageUrl?: string } = {}
@@ -1045,6 +1053,7 @@ export function parseMsiLectureEvaluationPage(
   });
   const selectedForms = forms.length > 0 ? forms : $("form").slice(0, 1);
   const targets: MsiLectureEvaluationTarget[] = [];
+  const saveAction = extractLectureEvaluationSaveAction(html);
 
   selectedForms.each((index, form) => {
     const formHtml = $.html(form);
@@ -1060,6 +1069,8 @@ export function parseMsiLectureEvaluationPage(
     const fullText = cleanText(formItem.text());
     const submitted = /제출완료|평가완료|완료/.test(fullText);
     const unavailable = /기간이 아닙니다|대상이 아닙니다|평가불가|마감/.test(fullText);
+    const submitAction =
+      saveAction && /savePage\(\)/.test(formHtml) ? saveAction : action;
 
     targets.push({
       id: targetIdFromFields(hiddenFields, String(index + 1)),
@@ -1067,7 +1078,9 @@ export function parseMsiLectureEvaluationPage(
       variant: inferLectureEvaluationVariant(`${options.menuName ?? ""} ${rawTitle}`),
       submitted,
       available: !submitted && !unavailable && questions.length > 0,
-      ...(action ? { submitUrl: resolveMsiFormAction(action, "MSI 강의평가") } : {}),
+      ...(submitAction
+        ? { submitUrl: resolveMsiFormAction(submitAction, "MSI 강의평가") }
+        : {}),
       questions,
       hiddenFields
     });
@@ -1114,7 +1127,7 @@ async function loadLectureEvaluationPages(
     .filter(
       (item) =>
         item.urlPath.includes("Sug00Svl02initDeptSatis") ||
-        /강의평가|만족도/.test(item.name)
+        (/강의평가|만족도/.test(item.name) && !/결과|조회/.test(item.name))
     )
     .map<MsiMenuSpec>((item) => ({
       name: item.name || MSI_LECTURE_EVALUATION_MENU.name,
@@ -1149,8 +1162,14 @@ export async function listMsiLectureEvaluations(
       menuName: page.menu.name,
       pageUrl: page.menu.urlPath
     });
-    warnings.push(...parsed.warnings);
     targets.push(...parsed.targets);
+    if (parsed.targets.length > 0) {
+      warnings.push(...parsed.warnings);
+    }
+  }
+
+  if (targets.length === 0) {
+    warnings.push("강의평가 대상 폼을 찾지 못했습니다.");
   }
 
   return { targets, warnings };
@@ -1199,6 +1218,50 @@ export async function previewMsiLectureEvaluationSubmit(
   };
 }
 
+async function verifyLectureEvaluationSubmit(
+  client: MjuMsiClient,
+  target: MsiLectureEvaluationTarget
+): Promise<Record<string, unknown> | undefined> {
+  if (
+    !target.submitUrl?.includes("Sug00Svl02setDeptSatis") ||
+    !target.hiddenFields.year ||
+    !target.hiddenFields.smt
+  ) {
+    return undefined;
+  }
+
+  const response = await client.postForm(
+    "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02selectCompleteStatus",
+    {
+      year: target.hiddenFields.year,
+      smt: target.hiddenFields.smt
+    },
+    {
+      headers: {
+        ...(target.hiddenFields._csrf
+          ? { "X-CSRF-TOKEN": target.hiddenFields._csrf }
+          : {}),
+        "x-requested-with": "XMLHttpRequest"
+      }
+    }
+  );
+  assertSuccessfulResponse(response, "MSI 강의평가 제출 상태 확인");
+
+  const status = JSON.parse(response.text) as Record<string, unknown>;
+  const completed =
+    status.dept === "완료됨" ||
+    status.std === "완료됨" ||
+    status.eval === "완료됨";
+
+  if (!completed) {
+    throw new Error(
+      `MSI 강의평가 제출 요청은 완료됐지만 저장 완료 상태를 확인하지 못했습니다: ${response.text}`
+    );
+  }
+
+  return status;
+}
+
 export async function submitMsiLectureEvaluations(
   client: MjuMsiClient,
   credentials: ResolvedLmsCredentials,
@@ -1235,12 +1298,14 @@ export async function submitMsiLectureEvaluations(
       )
     );
     assertSuccessfulResponse(response, `MSI 강의평가 ${target.title}`);
+    const verification = await verifyLectureEvaluationSubmit(client, target);
     submitted.push({
       targetId: target.id,
       title: target.title,
       variant: target.variant,
       submitted: true,
-      statusCode: response.statusCode
+      statusCode: response.statusCode,
+      ...(verification ? { verification } : {})
     });
   }
 
