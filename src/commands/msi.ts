@@ -43,7 +43,7 @@ async function createMsiClientWithCredentials(globals: GlobalOptions): Promise<{
 
 export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
   const msi = new Command("msi").description(
-    "Timetable, grades, and graduation requirements"
+    "Timetable, grades, graduation requirements, and lecture evaluations"
   );
 
   msi
