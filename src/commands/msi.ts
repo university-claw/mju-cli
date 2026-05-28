@@ -9,6 +9,7 @@ import {
   getMsiCurrentTermGrades,
   getMsiGradeHistory,
   getMsiGraduationRequirements,
+  getMsiLastClassTimes,
   getMsiTimetable,
   listMsiLectureEvaluations,
   previewMsiLectureEvaluationSubmit,
@@ -55,7 +56,7 @@ export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
         {
           service: "msi",
           implemented: {
-            timetable: ["get"],
+            timetable: ["get", "+last-class-times"],
             grades: ["current", "history", "course-scores"],
             graduation: ["requirements"],
             lectureEvaluations: ["list", "preview", "submit"]
@@ -77,6 +78,24 @@ export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
       const year = parseOptionalInt(options.year, "year");
       const termCode = parseOptionalInt(options.termCode, "term-code");
       const result = await getMsiTimetable(client, credentials, {
+        ...(year !== undefined ? { year } : {}),
+        ...(termCode !== undefined ? { termCode } : {})
+      });
+
+      printData(result, globals.format);
+    });
+
+  msi
+    .command("+last-class-times")
+    .description("Get the last class ending time for each weekday")
+    .option("--year <year>", "target year")
+    .option("--term-code <code>", "target term code")
+    .action(async (options: { year?: string; termCode?: string }) => {
+      const globals = getGlobals();
+      const { client, credentials } = await createMsiClientWithCredentials(globals);
+      const year = parseOptionalInt(options.year, "year");
+      const termCode = parseOptionalInt(options.termCode, "term-code");
+      const result = await getMsiLastClassTimes(client, credentials, {
         ...(year !== undefined ? { year } : {}),
         ...(termCode !== undefined ? { termCode } : {})
       });

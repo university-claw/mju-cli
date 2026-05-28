@@ -29,6 +29,7 @@ import type {
   MsiGraduationCreditGap,
   MsiGraduationCreditItem,
   MsiGraduationRequirementsResult,
+  MsiLastClassTimesResult,
   MsiMenuSpec,
   MsiScoreValue,
   MsiTimetableEntry,
@@ -210,6 +211,79 @@ function parseTimetablePage(html: string): MsiTimetableResult {
     termLabel: selectedTerm?.label ?? "",
     termOptions,
     entries: parseTimetableEntries(html)
+  };
+}
+
+export function parseMsiTimetableTimeRange(
+  timeRange: string | undefined
+): { startTime: string; endTime: string; startMinutes: number; endMinutes: number } | undefined {
+  const normalized = cleanText(timeRange ?? "").replace(/[–—]/g, "-");
+  const match = /(\d{1,2}):(\d{2})\s*(?:~|-)\s*(\d{1,2}):(\d{2})/.exec(normalized);
+  if (!match) {
+    return undefined;
+  }
+
+  const startTime = `${match[1]!.padStart(2, "0")}:${match[2]}`;
+  const endTime = `${match[3]!.padStart(2, "0")}:${match[4]}`;
+  const startMinutes = Number.parseInt(match[1]!, 10) * 60 + Number.parseInt(match[2]!, 10);
+  const endMinutes = Number.parseInt(match[3]!, 10) * 60 + Number.parseInt(match[4]!, 10);
+  if (endMinutes < startMinutes) {
+    return undefined;
+  }
+
+  return { startTime, endTime, startMinutes, endMinutes };
+}
+
+export function buildMsiLastClassTimes(
+  timetable: MsiTimetableResult,
+  generatedAt = new Date().toISOString()
+): MsiLastClassTimesResult {
+  const warnings: string[] = [];
+  const latestByDay = new Map<
+    number,
+    { entry: MsiTimetableEntry; parsed: NonNullable<ReturnType<typeof parseMsiTimetableTimeRange>> }
+  >();
+
+  for (const entry of timetable.entries) {
+    const parsed = parseMsiTimetableTimeRange(entry.timeRange);
+    if (!parsed) {
+      warnings.push(
+        `${entry.dayLabel || entry.dayOfWeek} ${entry.courseTitle} 시간 범위를 해석하지 못했습니다.`
+      );
+      continue;
+    }
+
+    const dayOfWeek = Number.isFinite(entry.dayOfWeek) ? entry.dayOfWeek : 0;
+    if (dayOfWeek < 1 || dayOfWeek > 7) {
+      warnings.push(`${entry.courseTitle} 요일 정보를 해석하지 못했습니다.`);
+      continue;
+    }
+
+    const previous = latestByDay.get(dayOfWeek);
+    if (!previous || parsed.endMinutes > previous.parsed.endMinutes) {
+      latestByDay.set(dayOfWeek, { entry, parsed });
+    }
+  }
+
+  const days = [...latestByDay.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([dayOfWeek, { entry, parsed }]) => ({
+      dayOfWeek,
+      dayLabel: entry.dayLabel,
+      courseTitle: entry.courseTitle,
+      ...(entry.location ? { location: entry.location } : {}),
+      ...(entry.professor ? { professor: entry.professor } : {}),
+      endTime: parsed.endTime,
+      timeRange: entry.timeRange ?? `${parsed.startTime}~${parsed.endTime}`
+    }));
+
+  return {
+    year: timetable.year,
+    termCode: timetable.termCode,
+    termLabel: timetable.termLabel,
+    generatedAt,
+    days,
+    warnings
   };
 }
 
@@ -1337,6 +1411,18 @@ export async function getMsiTimetable(
   }
 
   return parseTimetablePage(currentHtml);
+}
+
+export async function getMsiLastClassTimes(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    year?: number;
+    termCode?: number;
+  } = {}
+): Promise<MsiLastClassTimesResult> {
+  const timetable = await getMsiTimetable(client, credentials, options);
+  return buildMsiLastClassTimes(timetable);
 }
 
 export async function getMsiCurrentTermGrades(

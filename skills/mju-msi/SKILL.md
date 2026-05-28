@@ -18,6 +18,8 @@ metadata:
 ## 자주 쓰는 명령
 - 시간표 조회: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi timetable`
   - 선택 옵션: `--year <연도> --term-code <학기코드>`
+- 요일별 마지막 수업 종료 시각: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi +last-class-times`
+  - 셔틀 알림처럼 하루 마지막 수업 이후 행동을 정할 때 사용합니다.
 - 현재 학기 성적: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi current-grades`
 - 학기 중 수강점수: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi course-scores`
   - 선택 옵션: `--year <연도> --term-code <학기코드>`

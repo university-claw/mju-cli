@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import { createMsiCommand } from "../dist/commands/msi.js";
 import {
+  buildMsiLastClassTimes,
   isMsiCourseScoresPage,
+  parseMsiTimetableTimeRange,
   parseMsiCourseScoresPage,
   submitMsiFormQuery
 } from "../dist/msi/services.js";
@@ -185,6 +187,71 @@ test("parseMsiCourseScoresPage preserves rowspan assessment category", () => {
       }
     ]
   );
+});
+
+test("parseMsiTimetableTimeRange accepts common separators", () => {
+  assert.deepEqual(parseMsiTimetableTimeRange("13:00~14:50"), {
+    startTime: "13:00",
+    endTime: "14:50",
+    startMinutes: 780,
+    endMinutes: 890
+  });
+  assert.equal(parseMsiTimetableTimeRange("13:00 - 14:50")?.endTime, "14:50");
+  assert.equal(parseMsiTimetableTimeRange("13:00 – 14:50")?.endTime, "14:50");
+});
+
+test("buildMsiLastClassTimes keeps only the latest class per weekday", () => {
+  const result = buildMsiLastClassTimes(
+    {
+      year: 2026,
+      termCode: "10",
+      termLabel: "1학기",
+      termOptions: [],
+      entries: [
+        {
+          dayOfWeek: 1,
+          dayLabel: "월",
+          courseTitle: "오전 수업",
+          timeRange: "09:00~10:30",
+          location: "S1001"
+        },
+        {
+          dayOfWeek: 1,
+          dayLabel: "월",
+          courseTitle: "저녁 수업",
+          timeRange: "17:00 – 19:50",
+          location: "S2001"
+        },
+        {
+          dayOfWeek: 3,
+          dayLabel: "수",
+          courseTitle: "수요일 수업",
+          timeRange: "13:00 - 14:50"
+        },
+        {
+          dayOfWeek: 4,
+          dayLabel: "목",
+          courseTitle: "시간 미정",
+          timeRange: "미정"
+        }
+      ]
+    },
+    "2026-05-01T00:00:00.000Z"
+  );
+
+  assert.equal(result.days.length, 2);
+  assert.deepEqual(
+    result.days.map((day) => ({
+      dayOfWeek: day.dayOfWeek,
+      courseTitle: day.courseTitle,
+      endTime: day.endTime
+    })),
+    [
+      { dayOfWeek: 1, courseTitle: "저녁 수업", endTime: "19:50" },
+      { dayOfWeek: 3, courseTitle: "수요일 수업", endTime: "14:50" }
+    ]
+  );
+  assert.equal(result.warnings.length, 1);
 });
 
 test("isMsiCourseScoresPage rejects other MSI pages with year forms", () => {
