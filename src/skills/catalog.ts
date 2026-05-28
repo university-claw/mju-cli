@@ -73,6 +73,14 @@ const SKILL_SEEDS: SkillCatalogSeed[] = [
     requires: ["mju-shared", "mju-lms"],
   },
   {
+    name: "mju-lms-online-transcript-insights",
+    kind: "helper",
+    service: "lms",
+    description:
+      "온라인 강의의 LMS 제공 요약, 자막 원문, 중요 구간 후보를 분리해서 가져오는 helper skill",
+    requires: ["mju-shared", "mju-lms"],
+  },
+  {
     name: "mju-library-my-reservations",
     kind: "helper",
     service: "library",

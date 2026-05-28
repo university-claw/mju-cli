@@ -31,6 +31,9 @@ metadata:
   - 에이전트가 정답을 직접 생성한 제출물은 받지 않음
 - 온라인 학습 주차 목록: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms online list --course COURSE_NAME`
 - 온라인 학습 주차 상세: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms online get --course COURSE_NAME --lecture-weeks WEEK`
+- 온라인 강의 LMS 제공 요약: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms online summary --course COURSE_NAME --lecture-weeks WEEK --link-seq LINK_SEQ`
+- 온라인 강의 자막 원문: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms online transcript --course COURSE_NAME --lecture-weeks WEEK --link-seq LINK_SEQ --language KO`
+- 온라인 강의 중요 구간 후보: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms online insights --course COURSE_NAME --lecture-weeks WEEK --link-seq LINK_SEQ --language KO`
 
 ## helper (집계 명령)
 - 액션 아이템 (전체 강의): `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms +action-items --all-courses`

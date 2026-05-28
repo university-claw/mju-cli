@@ -13,6 +13,7 @@
 | [mju-library-study-room-reserve](../skills/mju-library-study-room-reserve/SKILL.md) | 스터디룸 예약 후보를 찾고 preview 후 실제 예약과 검증까지 안전하게 수행하는 helper skill. |
 | [mju-lms](../skills/mju-lms/SKILL.md) | 명지 LMS의 강의, 공지, 자료, 과제, 온라인 학습 흐름을 다루는 기본 skill. |
 | [mju-lms-action-items](../skills/mju-lms-action-items/SKILL.md) | LMS에서 지금 해야 할 일을 빠르게 추리는 helper skill. |
+| [mju-lms-online-transcript-insights](../skills/mju-lms-online-transcript-insights/SKILL.md) | LMS 온라인 강의의 제공 요약, 자막 원문, rule-based 중요 구간을 분리해서 가져오는 helper skill. |
 | [mju-msi](../skills/mju-msi/SKILL.md) | 시간표, 성적, 졸업요건, 강의평가를 다루는 MSI 기본 skill. |
 | [mju-safety-run-incomplete-videos](../skills/mju-safety-run-incomplete-videos/SKILL.md) | 연구실안전교육 미완료 영상을 모두 대신 들어주어 모든 영상을 완료된 상태로 만들어주는 helper skill. |
 | [mju-shared](../skills/mju-shared/SKILL.md) | 명지대학교 CLI 공통 인증, 출력, 안전 규칙을 설명하는 기본 skill. |
