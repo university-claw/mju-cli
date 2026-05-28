@@ -41,7 +41,7 @@ const SKILL_SEEDS: SkillCatalogSeed[] = [
     name: "mju-msi",
     kind: "service",
     service: "msi",
-    description: "시간표, 성적, 졸업요건 조회를 다루는 MSI 기본 skill",
+    description: "시간표, 성적, 졸업요건, 강의평가를 다루는 MSI 기본 skill",
     requires: ["mju-shared"]
   },
   {

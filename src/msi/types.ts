@@ -189,3 +189,71 @@ export interface MsiGraduationRequirementsResult {
   creditGaps: MsiGraduationCreditGap[];
   notes: string[];
 }
+
+export type MsiLectureEvaluationVariant = "midterm" | "regular" | "unknown";
+
+export type MsiLectureEvaluationSatisfaction =
+  | "very-satisfied"
+  | "satisfied"
+  | "neutral"
+  | "dissatisfied"
+  | "very-dissatisfied";
+
+export interface MsiLectureEvaluationChoice {
+  label: string;
+  value: string;
+  satisfaction?: MsiLectureEvaluationSatisfaction;
+}
+
+export interface MsiLectureEvaluationQuestion {
+  name: string;
+  label?: string;
+  required: boolean;
+  kind: "radio" | "select" | "textarea";
+  choices: MsiLectureEvaluationChoice[];
+}
+
+export interface MsiLectureEvaluationTarget {
+  id: string;
+  title: string;
+  variant: MsiLectureEvaluationVariant;
+  submitted: boolean;
+  available: boolean;
+  submitUrl?: string;
+  questions: MsiLectureEvaluationQuestion[];
+  hiddenFields: Record<string, string>;
+}
+
+export interface MsiLectureEvaluationListResult {
+  targets: MsiLectureEvaluationTarget[];
+  warnings: string[];
+}
+
+export interface MsiLectureEvaluationSatisfactionInference {
+  satisfaction: MsiLectureEvaluationSatisfaction;
+  label: "매우만족" | "만족" | "보통" | "불만족" | "매우불만족";
+  source: "explicit" | "instruction" | "default";
+}
+
+export interface MsiLectureEvaluationPreviewResult
+  extends MsiLectureEvaluationListResult {
+  inferred: MsiLectureEvaluationSatisfactionInference;
+  selectedTargets: MsiLectureEvaluationTarget[];
+}
+
+export interface MsiLectureEvaluationSubmitItem {
+  targetId: string;
+  title: string;
+  variant: MsiLectureEvaluationVariant;
+  submitted: boolean;
+  statusCode?: number;
+  verification?: Record<string, unknown>;
+  skippedReason?: string;
+}
+
+export interface MsiLectureEvaluationSubmitResult {
+  inferred: MsiLectureEvaluationSatisfactionInference;
+  submitted: MsiLectureEvaluationSubmitItem[];
+  skipped: MsiLectureEvaluationSubmitItem[];
+  warnings: string[];
+}

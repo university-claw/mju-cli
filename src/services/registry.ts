@@ -63,7 +63,7 @@ export const SERVICES: ServiceSpec[] = [
   },
   {
     name: "msi",
-    description: "Timetable, grades, and graduation requirements",
+    description: "Timetable, grades, graduation requirements, and lecture evaluations",
     resources: [
       {
         name: "timetable",
@@ -79,6 +79,11 @@ export const SERVICES: ServiceSpec[] = [
         name: "graduation",
         description: "Read graduation requirement status",
         actions: ["requirements"]
+      },
+      {
+        name: "lecture-evaluations",
+        description: "List, preview, and submit MSI lecture evaluations",
+        actions: ["list", "preview", "submit"]
       }
     ],
     helpers: [
