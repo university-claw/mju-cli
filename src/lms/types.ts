@@ -312,6 +312,56 @@ export interface AssignmentSubmitCheckResult {
   warnings: string[];
 }
 
+export type AssignmentSubmitContentSource =
+  | "user-file"
+  | "user-text"
+  | "user-draft-transform";
+
+export type AssignmentTextArtifactFormat = "txt" | "md";
+
+export interface AssignmentSubmitTextArtifact {
+  path: string;
+  fileName: string;
+  format: AssignmentTextArtifactFormat;
+  sizeBytes: number;
+}
+
+export interface AssignmentSubmitUploadedFile {
+  path: string;
+  fileName: string;
+  statusCode: number;
+  responseText?: string;
+}
+
+export interface AssignmentSubmitPlan {
+  canSubmit: boolean;
+  blockingReasons: string[];
+  warnings: string[];
+  contentSource: AssignmentSubmitContentSource;
+  textArtifact?: AssignmentSubmitTextArtifact;
+  localFiles: string[];
+  willUploadFiles: boolean;
+  willSubmitText: boolean;
+  submissionMode: AssignmentSubmitMode;
+  dryRun: boolean;
+}
+
+export interface AssignmentSubmitResult {
+  kjkey: string;
+  rtSeq: number;
+  title: string;
+  courseTitle?: string;
+  contentSource: AssignmentSubmitContentSource;
+  submissionMode: AssignmentSubmitMode;
+  dryRun: boolean;
+  check: AssignmentSubmitCheckResult;
+  plan: AssignmentSubmitPlan;
+  uploadedFiles: AssignmentSubmitUploadedFile[];
+  submitted: boolean;
+  submitStatusCode?: number;
+  submitResponseText?: string;
+}
+
 export interface OnlineWeekSummary {
   lectureWeeks: number;
   title: string;

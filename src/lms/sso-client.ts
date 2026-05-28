@@ -30,6 +30,33 @@ import type {
 
 export type FormPayloadValue = string | number | boolean;
 
+export function resolveSsoPasswordChangeContinuationUrl(
+  response: Pick<DecodedResponse, "url" | "text">
+): string | null {
+  let cmCgId: string | null = null;
+
+  try {
+    const url = new URL(response.url);
+    if (
+      url.hostname === "sso.mju.ac.kr" &&
+      url.pathname.toLowerCase() === "/sso/change/pw"
+    ) {
+      cmCgId = url.searchParams.get("cm_cg_id");
+    }
+  } catch {
+    // Fall back to the HTML body below.
+  }
+
+  cmCgId ??=
+    response.text.match(/\/sso\/change\/pw\?cm_cg_id=([A-Za-z0-9_-]+)/u)?.[1] ??
+    response.text.match(/cm_cg_id=['"]?\s*\+\s*\[\s*["']([A-Za-z0-9_-]+)["']\s*\]/u)?.[1] ??
+    null;
+
+  return cmCgId
+    ? `${SSO_BASE}/sso/auth?cm_cg_id=${encodeURIComponent(cmCgId)}`
+    : null;
+}
+
 function toDecodedResponse(response: Response<Buffer>): DecodedResponse {
   return {
     statusCode: response.statusCode,
@@ -151,7 +178,10 @@ export class MjuLmsSsoClient {
       }
     });
 
-    return toDecodedResponse(response);
+    const decoded = toDecodedResponse(response);
+    const continuationUrl = resolveSsoPasswordChangeContinuationUrl(decoded);
+
+    return continuationUrl ? this.getPage(continuationUrl) : decoded;
   }
 
   async getPage(url: string | URL): Promise<DecodedResponse> {

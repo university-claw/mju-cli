@@ -6,6 +6,7 @@ import { AuthManager } from "../auth/auth-manager.js";
 import { printData } from "../output/print.js";
 import type { GlobalOptions } from "../types.js";
 import { resolveLmsRuntimeConfig } from "../lms/config.js";
+import { submitAssignment } from "../lms/assignment-submission.js";
 import { checkAssignmentSubmission } from "../lms/assignment-submission-check.js";
 import { getCourseAssignment, listCourseAssignments } from "../lms/assignments.js";
 import {
@@ -153,7 +154,7 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
             courses: ["list"],
             notices: ["list", "get"],
             materials: ["list", "get"],
-            assignments: ["list", "get", "check-submission"],
+            assignments: ["list", "get", "check-submission", "submit"],
             online: ["list", "get", "summary", "transcript", "insights", "watch"],
             attachments: ["download", "download-bulk"],
             helpers: [
@@ -166,7 +167,7 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
             ]
           },
           planned: {
-            assignments: ["submit", "delete-submission"]
+            assignments: ["delete-submission"]
           }
         },
         globals.format
@@ -416,6 +417,71 @@ export function createLmsCommand(getGlobals: () => GlobalOptions): Command {
           ...(options.localFiles
             ? { localFiles: parseCommaSeparatedList(options.localFiles) }
             : {})
+        });
+
+        printData(result, globals.format);
+      }
+    );
+
+  assignments
+    .command("submit")
+    .description("Submit an LMS assignment with local files or user-provided text")
+    .option("--course <query>", "course title, course code, or kjkey")
+    .option("--kjkey <kjkey>", "explicit course kjkey")
+    .requiredOption("--rt-seq <id>", "assignment rt_seq")
+    .option("--text <value>", "text to submit as a generated txt/md artifact")
+    .option("--text-file-path <path>", "read submission text from a local file")
+    .option("--local-files <paths>", "comma-separated local attachment paths")
+    .option(
+      "--artifact-format <format>",
+      "text artifact format: txt or md",
+      "txt"
+    )
+    .option(
+      "--content-source <source>",
+      "user-file, user-text, or user-draft-transform"
+    )
+    .option("--dry-run", "validate and build the submit plan without submitting")
+    .action(
+      async (options: {
+        course?: string;
+        kjkey?: string;
+        rtSeq: string;
+        text?: string;
+        textFilePath?: string;
+        localFiles?: string;
+        artifactFormat?: string;
+        contentSource?: string;
+        dryRun?: boolean;
+      }) => {
+        const globals = getGlobals();
+        const { client, credentials } = await createLmsClientWithCredentials(globals);
+        const resolvedCourse = await resolveCourseReference(client, credentials, {
+          course: options.course,
+          kjkey: options.kjkey
+        });
+        const rtSeq = parseOptionalInt(options.rtSeq, "rt-seq");
+        if (rtSeq === undefined) {
+          throw new Error("rt-seq 는 필수입니다.");
+        }
+
+        const result = await submitAssignment(client, {
+          userId: credentials.userId,
+          password: credentials.password,
+          kjkey: resolvedCourse.kjkey,
+          rtSeq,
+          ...(options.text ? { text: options.text } : {}),
+          ...(options.textFilePath ? { textFilePath: options.textFilePath } : {}),
+          ...(options.localFiles
+            ? { localFiles: parseCommaSeparatedList(options.localFiles) }
+            : {}),
+          ...(options.artifactFormat
+            ? { artifactFormat: options.artifactFormat }
+            : {}),
+          ...(options.contentSource
+            ? { contentSource: options.contentSource }
+            : {}),
+          ...(options.dryRun ? { dryRun: true } : {})
         });
 
         printData(result, globals.format);
