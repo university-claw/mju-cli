@@ -81,7 +81,9 @@ export const SERVICES: ServiceSpec[] = [
         actions: ["requirements"]
       }
     ],
-    helpers: []
+    helpers: [
+      { name: "+last-class-times", description: "Show last class ending time by weekday" }
+    ]
   },
   {
     name: "ucheck",
