@@ -6,6 +6,7 @@ import { load } from "cheerio";
 import got, { type Response } from "got";
 import { CookieJar } from "tough-cookie";
 
+import { resolveSsoPasswordChangeContinuationUrl } from "../lms/sso-client.js";
 import type { DecodedResponse, SsoForm } from "../lms/types.js";
 import { decodeHtml } from "../lms/encoding.js";
 import {
@@ -54,15 +55,26 @@ function resolveRedirectUrl(
   return location ? new URL(location, baseUrl).toString() : undefined;
 }
 
-function resolveLoginContinuationUrl(
-  response: Pick<DecodedResponse, "url" | "headers">,
+export function resolveMsiLoginContinuationUrl(
+  response: Pick<DecodedResponse, "url" | "headers" | "text">,
   baseUrl: string
 ): string | undefined {
   if (response.url.includes("code=")) {
     return response.url;
   }
 
-  return resolveRedirectUrl(response, baseUrl);
+  const redirectUrl = resolveRedirectUrl(response, baseUrl);
+  if (redirectUrl?.includes("code=")) {
+    return redirectUrl;
+  }
+
+  const passwordChangeContinuationUrl =
+    resolveSsoPasswordChangeContinuationUrl({
+      url: redirectUrl ?? response.url,
+      text: response.text
+    });
+
+  return passwordChangeContinuationUrl ?? redirectUrl;
 }
 
 export class MjuMsiClient {
@@ -268,7 +280,7 @@ export class MjuMsiClient {
       { followRedirect: false }
     );
 
-    const callbackUrl = resolveLoginContinuationUrl(ssoLoginResponse, loginUrl);
+    const callbackUrl = resolveMsiLoginContinuationUrl(ssoLoginResponse, loginUrl);
     if (!callbackUrl) {
       throw new Error("MSI SSO 로그인 후 callback URL을 찾지 못했습니다.");
     }
