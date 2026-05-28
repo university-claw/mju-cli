@@ -8,6 +8,7 @@ import { CookieJar } from "tough-cookie";
 
 import type { DecodedResponse, SsoForm } from "../lms/types.js";
 import { decodeHtml } from "../lms/encoding.js";
+import { resolveSsoPasswordChangeContinuationUrl } from "../lms/sso-client.js";
 import {
   createCookieSessionStore,
   resolveStorageContext
@@ -35,6 +36,12 @@ function toDecodedResponse(response: Response<Buffer>): DecodedResponse {
     rawBody: response.rawBody,
     headers: response.headers
   };
+}
+
+export function resolveUcheckLoginContinuationUrl(
+  response: Pick<DecodedResponse, "url" | "text">
+): string | undefined {
+  return resolveSsoPasswordChangeContinuationUrl(response) ?? undefined;
 }
 
 export class MjuUcheckClient {
@@ -191,7 +198,7 @@ export class MjuUcheckClient {
     const pwEnc = encryptPasswordForSso(password.trim(), key, iv);
     const loginUrl = new URL(ssoForm.action, entryResponse.url).toString();
 
-    await this.postForm(
+    const loginResponse = await this.postForm(
       loginUrl,
       {
         user_id: userId,
@@ -203,6 +210,13 @@ export class MjuUcheckClient {
       },
       { followRedirect: true }
     );
+
+    // SSO가 비밀번호 변경 안내 페이지를 끼워 넣으면 실제 서비스 callback까지 이어서 진행해야
+    // UCheck 세션 쿠키가 생성된다. 이 단계가 빠지면 로그인은 끝난 것처럼 보여도 메인 조회가 다시 SSO로 튕긴다.
+    const continuationUrl = resolveUcheckLoginContinuationUrl(loginResponse);
+    if (continuationUrl) {
+      await this.getPage(continuationUrl, { followRedirect: true });
+    }
 
     return this.fetchMainPage();
   }
