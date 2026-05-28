@@ -14,9 +14,9 @@
 | [mju-lms](../skills/mju-lms/SKILL.md) | 명지 LMS의 강의, 공지, 자료, 과제, 온라인 학습 흐름을 다루는 기본 skill. |
 | [mju-lms-action-items](../skills/mju-lms-action-items/SKILL.md) | LMS에서 지금 해야 할 일을 빠르게 추리는 helper skill. |
 | [mju-msi](../skills/mju-msi/SKILL.md) | 시간표, 성적, 졸업요건, 강의평가를 다루는 MSI 기본 skill. |
+| [mju-safety-run-incomplete-videos](../skills/mju-safety-run-incomplete-videos/SKILL.md) | 연구실안전교육 미완료 영상을 모두 대신 들어주어 모든 영상을 완료된 상태로 만들어주는 helper skill. |
 | [mju-shared](../skills/mju-shared/SKILL.md) | 명지대학교 CLI 공통 인증, 출력, 안전 규칙을 설명하는 기본 skill. |
 | [mju-ucheck](../skills/mju-ucheck/SKILL.md) | 과목별 출석 현황을 확인하는 UCheck 기본 skill. |
 | [recipe-mju-check-today](../skills/recipe-mju-check-today/SKILL.md) | 오늘 처리할 LMS 액션과 도서관 예약 상황을 함께 확인하는 daily recipe. |
 | [recipe-mju-seat-reserve](../skills/recipe-mju-seat-reserve/SKILL.md) | 열람실 좌석을 preview 후 예약하고 검증까지 마무리하는 recipe. |
 | [recipe-mju-study-day-digest](../skills/recipe-mju-study-day-digest/SKILL.md) | LMS digest와 도서관 좌석 흐름을 묶어 학습 준비를 한 번에 점검하는 recipe. |
-
