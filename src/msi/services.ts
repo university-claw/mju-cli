@@ -1,10 +1,20 @@
-import { load } from "cheerio";
+import { load, type CheerioAPI } from "cheerio";
 
 import type { ResolvedLmsCredentials } from "../auth/types.js";
 import type { MjuMsiClient } from "./client.js";
 import { MSI_BASE } from "./constants.js";
-import { openMsiMenu } from "./menu.js";
+import { loadMsiMenuSnapshot, openMsiMenu } from "./menu.js";
 import type {
+  MsiLectureEvaluationChoice,
+  MsiLectureEvaluationListResult,
+  MsiLectureEvaluationPreviewResult,
+  MsiLectureEvaluationQuestion,
+  MsiLectureEvaluationSatisfaction,
+  MsiLectureEvaluationSatisfactionInference,
+  MsiLectureEvaluationSubmitItem,
+  MsiLectureEvaluationSubmitResult,
+  MsiLectureEvaluationTarget,
+  MsiLectureEvaluationVariant,
   MsiCreditBucket,
   MsiCourseScoreCourse,
   MsiCourseScoreItem,
@@ -19,6 +29,7 @@ import type {
   MsiGraduationCreditGap,
   MsiGraduationCreditItem,
   MsiGraduationRequirementsResult,
+  MsiLastClassTimesResult,
   MsiMenuSpec,
   MsiScoreValue,
   MsiTimetableEntry,
@@ -59,6 +70,13 @@ export const MSI_GRADUATION_REQUIREMENTS_MENU: MsiMenuSpec = {
   urlPath: "/servlet/su/sui/Sui00Svl01getGdtRequire",
   folderDiv: "104",
   pgmid: "W_SUI005"
+};
+
+export const MSI_LECTURE_EVALUATION_MENU: MsiMenuSpec = {
+  name: "강의평가",
+  urlPath: "/servlet/su/sug/Sug00Svl02initDeptSatis",
+  folderDiv: "102",
+  pgmid: "W_SUG020"
 };
 
 function cleanText(value: string | undefined): string {
@@ -193,6 +211,79 @@ function parseTimetablePage(html: string): MsiTimetableResult {
     termLabel: selectedTerm?.label ?? "",
     termOptions,
     entries: parseTimetableEntries(html)
+  };
+}
+
+export function parseMsiTimetableTimeRange(
+  timeRange: string | undefined
+): { startTime: string; endTime: string; startMinutes: number; endMinutes: number } | undefined {
+  const normalized = cleanText(timeRange ?? "").replace(/[–—]/g, "-");
+  const match = /(\d{1,2}):(\d{2})\s*(?:~|-)\s*(\d{1,2}):(\d{2})/.exec(normalized);
+  if (!match) {
+    return undefined;
+  }
+
+  const startTime = `${match[1]!.padStart(2, "0")}:${match[2]}`;
+  const endTime = `${match[3]!.padStart(2, "0")}:${match[4]}`;
+  const startMinutes = Number.parseInt(match[1]!, 10) * 60 + Number.parseInt(match[2]!, 10);
+  const endMinutes = Number.parseInt(match[3]!, 10) * 60 + Number.parseInt(match[4]!, 10);
+  if (endMinutes < startMinutes) {
+    return undefined;
+  }
+
+  return { startTime, endTime, startMinutes, endMinutes };
+}
+
+export function buildMsiLastClassTimes(
+  timetable: MsiTimetableResult,
+  generatedAt = new Date().toISOString()
+): MsiLastClassTimesResult {
+  const warnings: string[] = [];
+  const latestByDay = new Map<
+    number,
+    { entry: MsiTimetableEntry; parsed: NonNullable<ReturnType<typeof parseMsiTimetableTimeRange>> }
+  >();
+
+  for (const entry of timetable.entries) {
+    const parsed = parseMsiTimetableTimeRange(entry.timeRange);
+    if (!parsed) {
+      warnings.push(
+        `${entry.dayLabel || entry.dayOfWeek} ${entry.courseTitle} 시간 범위를 해석하지 못했습니다.`
+      );
+      continue;
+    }
+
+    const dayOfWeek = Number.isFinite(entry.dayOfWeek) ? entry.dayOfWeek : 0;
+    if (dayOfWeek < 1 || dayOfWeek > 7) {
+      warnings.push(`${entry.courseTitle} 요일 정보를 해석하지 못했습니다.`);
+      continue;
+    }
+
+    const previous = latestByDay.get(dayOfWeek);
+    if (!previous || parsed.endMinutes > previous.parsed.endMinutes) {
+      latestByDay.set(dayOfWeek, { entry, parsed });
+    }
+  }
+
+  const days = [...latestByDay.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([dayOfWeek, { entry, parsed }]) => ({
+      dayOfWeek,
+      dayLabel: entry.dayLabel,
+      courseTitle: entry.courseTitle,
+      ...(entry.location ? { location: entry.location } : {}),
+      ...(entry.professor ? { professor: entry.professor } : {}),
+      endTime: parsed.endTime,
+      timeRange: entry.timeRange ?? `${parsed.startTime}~${parsed.endTime}`
+    }));
+
+  return {
+    year: timetable.year,
+    termCode: timetable.termCode,
+    termLabel: timetable.termLabel,
+    generatedAt,
+    days,
+    warnings
   };
 }
 
@@ -769,6 +860,537 @@ export async function submitMsiFormQuery(
   return response.text;
 }
 
+function inferLectureEvaluationVariant(text: string): MsiLectureEvaluationVariant {
+  if (/중간/.test(text)) {
+    return "midterm";
+  }
+  if (/기말|최종|강의평가|만족도/.test(text)) {
+    return "regular";
+  }
+
+  return "unknown";
+}
+
+function satisfactionLabel(
+  satisfaction: MsiLectureEvaluationSatisfaction
+): MsiLectureEvaluationSatisfactionInference["label"] {
+  switch (satisfaction) {
+    case "very-satisfied":
+      return "매우만족";
+    case "satisfied":
+      return "만족";
+    case "neutral":
+      return "보통";
+    case "dissatisfied":
+      return "불만족";
+    case "very-dissatisfied":
+      return "매우불만족";
+  }
+}
+
+function classifySatisfactionLabel(
+  label: string
+): MsiLectureEvaluationSatisfaction | undefined {
+  const normalized = cleanText(label).replace(/\s+/g, "");
+  if (/매우만족|아주만족|매우그렇다|아주그렇다/.test(normalized)) {
+    return "very-satisfied";
+  }
+  if (/매우불만족|아주불만족|전혀그렇지않다/.test(normalized)) {
+    return "very-dissatisfied";
+  }
+  if (/불만족|그렇지않다/.test(normalized)) {
+    return "dissatisfied";
+  }
+  if (/보통|중립|그저그렇다/.test(normalized)) {
+    return "neutral";
+  }
+  if (/만족|그렇다/.test(normalized)) {
+    return "satisfied";
+  }
+
+  return undefined;
+}
+
+export function inferMsiLectureEvaluationSatisfaction(options: {
+  satisfaction?: string;
+  instruction?: string;
+}): MsiLectureEvaluationSatisfactionInference {
+  const explicit = options.satisfaction?.trim();
+  const instruction = options.instruction?.trim();
+  const lookup: Record<string, MsiLectureEvaluationSatisfaction> = {
+    "매우만족": "very-satisfied",
+    "very-satisfied": "very-satisfied",
+    "5": "very-satisfied",
+    "만족": "satisfied",
+    "satisfied": "satisfied",
+    "4": "satisfied",
+    "보통": "neutral",
+    "neutral": "neutral",
+    "3": "neutral",
+    "불만족": "dissatisfied",
+    "dissatisfied": "dissatisfied",
+    "2": "dissatisfied",
+    "매우불만족": "very-dissatisfied",
+    "very-dissatisfied": "very-dissatisfied",
+    "1": "very-dissatisfied"
+  };
+
+  if (explicit) {
+    const satisfactionValue = lookup[explicit] ?? classifySatisfactionLabel(explicit);
+    if (!satisfactionValue) {
+      throw new Error(
+        "satisfaction 은 매우만족/만족/보통/불만족/매우불만족 중 하나여야 합니다."
+      );
+    }
+    return {
+      satisfaction: satisfactionValue,
+      label: satisfactionLabel(satisfactionValue),
+      source: "explicit"
+    };
+  }
+
+  if (instruction) {
+    const satisfactionValue = classifySatisfactionLabel(instruction);
+    if (satisfactionValue) {
+      return {
+        satisfaction: satisfactionValue,
+        label: satisfactionLabel(satisfactionValue),
+        source: "instruction"
+      };
+    }
+  }
+
+  return {
+    satisfaction: "neutral",
+    label: "보통",
+    source: "default"
+  };
+}
+
+function extractOptionLabel(
+  $: CheerioAPI,
+  input: ReturnType<CheerioAPI>,
+  fallback: string
+): string {
+  const id = input.attr("id");
+  if (id) {
+    const byFor = cleanText($(`label[for="${id}"]`).first().text());
+    if (byFor) {
+      return byFor;
+    }
+  }
+
+  const parentLabel = cleanText(input.closest("label").text());
+  if (parentLabel) {
+    return parentLabel;
+  }
+
+  return fallback;
+}
+
+function parseLectureEvaluationQuestionChoices(
+  $: CheerioAPI,
+  elements: ReturnType<CheerioAPI>
+): MsiLectureEvaluationChoice[] {
+  return elements
+    .map((_, element) => {
+      const item = $(element);
+      const value = cleanText(item.attr("value") ?? "");
+      const label = item.is("option")
+        ? cleanText(item.text()) || value
+        : extractOptionLabel($, item, value);
+      const satisfaction = classifySatisfactionLabel(label);
+      return {
+        label,
+        value,
+        ...(satisfaction ? { satisfaction } : {})
+      };
+    })
+    .get()
+    .filter((choice) => choice.value.length > 0 && choice.label.length > 0);
+}
+
+function parseMsiLectureEvaluationQuestions(
+  formHtml: string
+): MsiLectureEvaluationQuestion[] {
+  const $ = load(formHtml);
+  const questions: MsiLectureEvaluationQuestion[] = [];
+  const radioNames = new Set<string>();
+
+  $('input[type="radio"][name]').each((_, element) => {
+    const name = $(element).attr("name");
+    if (name) {
+      radioNames.add(name);
+    }
+  });
+
+  for (const name of radioNames) {
+    const choices = parseLectureEvaluationQuestionChoices(
+      $,
+      $('input[type="radio"][name]').filter(
+        (_, element) => $(element).attr("name") === name
+      )
+    );
+    questions.push({
+      name,
+      required: true,
+      kind: "radio",
+      choices
+    });
+  }
+
+  $("select[name]").each((_, element) => {
+    const name = $(element).attr("name");
+    if (!name) {
+      return;
+    }
+    const choices = parseLectureEvaluationQuestionChoices(
+      $,
+      $(element).find("option")
+    );
+    if (choices.some((choice) => choice.satisfaction)) {
+      questions.push({
+        name,
+        required: $(element).is("[required]"),
+        kind: "select",
+        choices
+      });
+    }
+  });
+
+  $("textarea[name]").each((_, element) => {
+    const name = $(element).attr("name");
+    if (!name) {
+      return;
+    }
+    questions.push({
+      name,
+      required: $(element).is("[required]"),
+      kind: "textarea",
+      choices: []
+    });
+  });
+
+  return questions;
+}
+
+function extractLectureEvaluationHiddenFields(
+  formHtml: string
+): Record<string, string> {
+  const $ = load(formHtml);
+  const fields: Record<string, string> = {};
+  $('input[name]').each((_, element) => {
+    const type = ($(element).attr("type") ?? "text").toLowerCase();
+    const name = $(element).attr("name");
+    if (!name || type === "radio" || type === "checkbox" || type === "submit") {
+      return;
+    }
+    fields[name] = $(element).attr("value") ?? "";
+  });
+
+  return fields;
+}
+
+function targetIdFromFields(
+  fields: Record<string, string>,
+  fallback: string
+): string {
+  for (const [name, value] of Object.entries(fields)) {
+    if (/curi|course|lecture|lect|subj|satis|seq|idx/i.test(name) && value) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+function extractLectureEvaluationSaveAction(html: string): string | undefined {
+  const match =
+    /(?:form|document\.form1)\.action\s*=\s*['"]([^'"]*Svl02[^'"]*)['"]/i.exec(html) ??
+    /action\s*=\s*['"]([^'"]*Svl02set[^'"]*)['"]/i.exec(html);
+
+  return match?.[1];
+}
+
+export function parseMsiLectureEvaluationPage(
+  html: string,
+  options: { menuName?: string; pageUrl?: string } = {}
+): MsiLectureEvaluationListResult {
+  const $ = load(html);
+  const warnings: string[] = [];
+  const forms = $("form").filter((_, form) => {
+    const formHtml = $(form).html() ?? "";
+    return (
+      /radio|select|textarea|Satis|satis|평가|만족/.test(formHtml) &&
+      $(form).find("input[name], select[name], textarea[name]").length > 0
+    );
+  });
+  const selectedForms = forms.length > 0 ? forms : $("form").slice(0, 1);
+  const targets: MsiLectureEvaluationTarget[] = [];
+  const saveAction = extractLectureEvaluationSaveAction(html);
+
+  selectedForms.each((index, form) => {
+    const formHtml = $.html(form);
+    const formItem = $(form);
+    const rawTitle =
+      cleanText(formItem.find(".data-title, legend, h1, h2, h3, caption").first().text()) ||
+      cleanText(formItem.closest(".card-item, .basic, .card").find(".data-title").first().text()) ||
+      cleanText(formItem.text()).slice(0, 80) ||
+      `${options.menuName ?? "강의평가"} ${index + 1}`;
+    const action = cleanText(formItem.attr("action") ?? "");
+    const hiddenFields = extractLectureEvaluationHiddenFields(formHtml);
+    const questions = parseMsiLectureEvaluationQuestions(formHtml);
+    const fullText = cleanText(formItem.text());
+    const submitted = /제출완료|평가완료|완료/.test(fullText);
+    const unavailable = /기간이 아닙니다|대상이 아닙니다|평가불가|마감/.test(fullText);
+    const submitAction =
+      saveAction && /savePage\(\)/.test(formHtml) ? saveAction : action;
+
+    targets.push({
+      id: targetIdFromFields(hiddenFields, String(index + 1)),
+      title: rawTitle,
+      variant: inferLectureEvaluationVariant(`${options.menuName ?? ""} ${rawTitle}`),
+      submitted,
+      available: !submitted && !unavailable && questions.length > 0,
+      ...(submitAction
+        ? { submitUrl: resolveMsiFormAction(submitAction, "MSI 강의평가") }
+        : {}),
+      questions,
+      hiddenFields
+    });
+  });
+
+  if (targets.length === 0) {
+    warnings.push("강의평가 대상 폼을 찾지 못했습니다.");
+  }
+
+  return { targets, warnings };
+}
+
+function buildLectureEvaluationPayload(
+  target: MsiLectureEvaluationTarget,
+  satisfaction: MsiLectureEvaluationSatisfaction,
+  comment: string | undefined
+): Record<string, string> {
+  const payload: Record<string, string> = { ...target.hiddenFields };
+
+  for (const question of target.questions) {
+    if (question.kind === "textarea") {
+      payload[question.name] = comment?.trim() || "보통입니다.";
+      continue;
+    }
+
+    const matched =
+      question.choices.find((choice) => choice.satisfaction === satisfaction) ??
+      question.choices.find((choice) => choice.satisfaction === "neutral") ??
+      question.choices[Math.floor(question.choices.length / 2)];
+    if (matched) {
+      payload[question.name] = matched.value;
+    }
+  }
+
+  return payload;
+}
+
+async function loadLectureEvaluationPages(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials
+): Promise<Array<{ menu: MsiMenuSpec; html: string }>> {
+  const menuItems = await loadMsiMenuSnapshot(client, credentials);
+  const discovered = menuItems
+    .filter(
+      (item) =>
+        item.urlPath.includes("Sug00Svl02initDeptSatis") ||
+        (/강의평가|만족도/.test(item.name) && !/결과|조회/.test(item.name))
+    )
+    .map<MsiMenuSpec>((item) => ({
+      name: item.name || MSI_LECTURE_EVALUATION_MENU.name,
+      urlPath: item.urlPath || MSI_LECTURE_EVALUATION_MENU.urlPath,
+      folderDiv: item.folderDiv || MSI_LECTURE_EVALUATION_MENU.folderDiv,
+      pgmid: item.pgmid || MSI_LECTURE_EVALUATION_MENU.pgmid,
+      sysdiv: item.sysdiv,
+      subsysdiv: item.subsysdiv,
+      submitMode: item.source === "side" ? "sideform" : "form1"
+    }));
+  const menus = discovered.length > 0 ? discovered : [MSI_LECTURE_EVALUATION_MENU];
+  const pages: Array<{ menu: MsiMenuSpec; html: string }> = [];
+
+  for (const menu of menus) {
+    const { pageResponse } = await openMsiMenu(client, credentials, menu);
+    pages.push({ menu, html: pageResponse.text });
+  }
+
+  return pages;
+}
+
+export async function listMsiLectureEvaluations(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials
+): Promise<MsiLectureEvaluationListResult> {
+  const pages = await loadLectureEvaluationPages(client, credentials);
+  const warnings: string[] = [];
+  const targets: MsiLectureEvaluationTarget[] = [];
+
+  for (const page of pages) {
+    const parsed = parseMsiLectureEvaluationPage(page.html, {
+      menuName: page.menu.name,
+      pageUrl: page.menu.urlPath
+    });
+    targets.push(...parsed.targets);
+    if (parsed.targets.length > 0) {
+      warnings.push(...parsed.warnings);
+    }
+  }
+
+  if (targets.length === 0) {
+    warnings.push("강의평가 대상 폼을 찾지 못했습니다.");
+  }
+
+  return { targets, warnings };
+}
+
+function selectLectureEvaluationTargets(
+  result: MsiLectureEvaluationListResult,
+  options: { target?: string; all?: boolean }
+): MsiLectureEvaluationTarget[] {
+  const available = result.targets.filter((target) => target.available);
+  if (options.target) {
+    const selected = available.filter(
+      (target) => target.id === options.target || target.title.includes(options.target ?? "")
+    );
+    if (selected.length === 0) {
+      throw new Error(`강의평가 대상 '${options.target}' 을 찾지 못했습니다.`);
+    }
+    return selected;
+  }
+
+  if (available.length > 1 && !options.all) {
+    throw new Error("강의평가 대상이 여러 개입니다. --target 또는 --all 을 지정하세요.");
+  }
+
+  return options.all ? available : available.slice(0, 1);
+}
+
+export async function previewMsiLectureEvaluationSubmit(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    instruction?: string;
+    satisfaction?: string;
+    target?: string;
+    all?: boolean;
+  } = {}
+): Promise<MsiLectureEvaluationPreviewResult> {
+  const result = await listMsiLectureEvaluations(client, credentials);
+  const inferred = inferMsiLectureEvaluationSatisfaction(options);
+  const selectedTargets = selectLectureEvaluationTargets(result, options);
+
+  return {
+    ...result,
+    inferred,
+    selectedTargets
+  };
+}
+
+async function verifyLectureEvaluationSubmit(
+  client: MjuMsiClient,
+  target: MsiLectureEvaluationTarget
+): Promise<Record<string, unknown> | undefined> {
+  if (
+    !target.submitUrl?.includes("Sug00Svl02setDeptSatis") ||
+    !target.hiddenFields.year ||
+    !target.hiddenFields.smt
+  ) {
+    return undefined;
+  }
+
+  const response = await client.postForm(
+    "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02selectCompleteStatus",
+    {
+      year: target.hiddenFields.year,
+      smt: target.hiddenFields.smt
+    },
+    {
+      headers: {
+        ...(target.hiddenFields._csrf
+          ? { "X-CSRF-TOKEN": target.hiddenFields._csrf }
+          : {}),
+        "x-requested-with": "XMLHttpRequest"
+      }
+    }
+  );
+  assertSuccessfulResponse(response, "MSI 강의평가 제출 상태 확인");
+
+  const status = JSON.parse(response.text) as Record<string, unknown>;
+  const completed =
+    status.dept === "완료됨" ||
+    status.std === "완료됨" ||
+    status.eval === "완료됨";
+
+  if (!completed) {
+    throw new Error(
+      `MSI 강의평가 제출 요청은 완료됐지만 저장 완료 상태를 확인하지 못했습니다: ${response.text}`
+    );
+  }
+
+  return status;
+}
+
+export async function submitMsiLectureEvaluations(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    instruction?: string;
+    satisfaction?: string;
+    target?: string;
+    all?: boolean;
+    comment?: string;
+  } = {}
+): Promise<MsiLectureEvaluationSubmitResult> {
+  const preview = await previewMsiLectureEvaluationSubmit(client, credentials, options);
+  const submitted: MsiLectureEvaluationSubmitItem[] = [];
+  const skipped: MsiLectureEvaluationSubmitItem[] = [];
+
+  for (const target of preview.selectedTargets) {
+    if (!target.submitUrl) {
+      skipped.push({
+        targetId: target.id,
+        title: target.title,
+        variant: target.variant,
+        submitted: false,
+        skippedReason: "제출 URL을 찾지 못했습니다."
+      });
+      continue;
+    }
+
+    const response = await client.postForm(
+      target.submitUrl,
+      buildLectureEvaluationPayload(
+        target,
+        preview.inferred.satisfaction,
+        options.comment
+      )
+    );
+    assertSuccessfulResponse(response, `MSI 강의평가 ${target.title}`);
+    const verification = await verifyLectureEvaluationSubmit(client, target);
+    submitted.push({
+      targetId: target.id,
+      title: target.title,
+      variant: target.variant,
+      submitted: true,
+      statusCode: response.statusCode,
+      ...(verification ? { verification } : {})
+    });
+  }
+
+  return {
+    inferred: preview.inferred,
+    submitted,
+    skipped,
+    warnings: preview.warnings
+  };
+}
+
 export async function getMsiTimetable(
   client: MjuMsiClient,
   credentials: ResolvedLmsCredentials,
@@ -789,6 +1411,18 @@ export async function getMsiTimetable(
   }
 
   return parseTimetablePage(currentHtml);
+}
+
+export async function getMsiLastClassTimes(
+  client: MjuMsiClient,
+  credentials: ResolvedLmsCredentials,
+  options: {
+    year?: number;
+    termCode?: number;
+  } = {}
+): Promise<MsiLastClassTimesResult> {
+  const timetable = await getMsiTimetable(client, credentials, options);
+  return buildMsiLastClassTimes(timetable);
 }
 
 export async function getMsiCurrentTermGrades(

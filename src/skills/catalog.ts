@@ -47,7 +47,7 @@ const SKILL_SEEDS: SkillCatalogSeed[] = [
     name: "mju-msi",
     kind: "service",
     service: "msi",
-    description: "시간표, 성적, 졸업요건 조회를 다루는 MSI 기본 skill",
+    description: "시간표, 성적, 졸업요건, 강의평가를 다루는 MSI 기본 skill",
     requires: ["mju-shared"],
   },
   {
@@ -101,6 +101,14 @@ const SKILL_SEEDS: SkillCatalogSeed[] = [
     description:
       "연구실안전교육 미완료 영상에 read-only console probe를 실행하는 helper skill",
     requires: ["mju-shared"],
+  },
+  {
+    name: "mju-library-study-room-reserve",
+    kind: "helper",
+    service: "library",
+    description:
+      "스터디룸 예약 후보를 찾고 preview 후 예약과 검증까지 수행하는 helper skill",
+    requires: ["mju-shared", "mju-library"],
   },
   {
     name: "recipe-mju-check-today",
