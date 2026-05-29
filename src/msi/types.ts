@@ -191,6 +191,7 @@ export interface MsiGraduationRequirementsResult {
 }
 
 export type MsiLectureEvaluationVariant = "midterm" | "regular" | "unknown";
+export type MsiLectureEvaluationScope = "department" | "course" | "unknown";
 
 export type MsiLectureEvaluationSatisfaction =
   | "very-satisfied"
@@ -217,6 +218,7 @@ export interface MsiLectureEvaluationTarget {
   id: string;
   title: string;
   variant: MsiLectureEvaluationVariant;
+  scope: MsiLectureEvaluationScope;
   submitted: boolean;
   available: boolean;
   submitUrl?: string;

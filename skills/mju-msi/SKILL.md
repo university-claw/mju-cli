@@ -26,7 +26,10 @@ metadata:
 - 전체 성적 이력: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi grade-history`
 - 졸업 요건: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi graduation`
 - 강의평가 대상 조회: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi lecture-evaluations list`
+  - 교육만족도 조사와 강의별 강의평가 대상이 함께 조회됩니다.
+  - 대상 JSON의 `scope`는 `department`(교육만족도) 또는 `course`(강의별 강의평가)입니다.
 - 강의평가 제출 미리보기: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi lecture-evaluations preview --instruction "보통으로 ㄱㄱ"`
   - 대상이 여러 개면 `--target <id-or-title>` 또는 `--all` 필요
 - 강의평가 제출: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json msi lecture-evaluations submit --instruction "보통으로 ㄱㄱ" --target TARGET`
   - 만족도는 `--satisfaction 매우만족|만족|보통|불만족|매우불만족`로 명시 가능
+  - 사용자가 "강의평가 전부 보통으로"처럼 말하면 `--all --satisfaction 보통`을 사용합니다.
