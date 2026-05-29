@@ -1,4 +1,5 @@
 import { load, type CheerioAPI } from "cheerio";
+import type { AnyNode } from "domhandler";
 
 import type { ResolvedLmsCredentials } from "../auth/types.js";
 import type { MjuMsiClient } from "./client.js";
@@ -11,6 +12,7 @@ import type {
   MsiLectureEvaluationQuestion,
   MsiLectureEvaluationSatisfaction,
   MsiLectureEvaluationSatisfactionInference,
+  MsiLectureEvaluationScope,
   MsiLectureEvaluationSubmitItem,
   MsiLectureEvaluationSubmitResult,
   MsiLectureEvaluationTarget,
@@ -871,6 +873,20 @@ function inferLectureEvaluationVariant(text: string): MsiLectureEvaluationVarian
   return "unknown";
 }
 
+function inferLectureEvaluationScope(text: string): MsiLectureEvaluationScope {
+  if (/DeptSatis|교육만족|부서만족|만족도\s*조사/i.test(text)) {
+    return "department";
+  }
+  if (/StdSatis|재학생\s*만족도/i.test(text)) {
+    return "department";
+  }
+  if (/EvalLecture|setEvalLecture|수강\s*강좌|강좌번호|강의별|강의평가/i.test(text)) {
+    return "course";
+  }
+
+  return "unknown";
+}
+
 function satisfactionLabel(
   satisfaction: MsiLectureEvaluationSatisfaction
 ): MsiLectureEvaluationSatisfactionInference["label"] {
@@ -1087,6 +1103,25 @@ function extractLectureEvaluationHiddenFields(
     }
     fields[name] = $(element).attr("value") ?? "";
   });
+  $("select[name]").each((_, element) => {
+    const name = $(element).attr("name");
+    if (!name || fields[name] !== undefined) {
+      return;
+    }
+    const selected =
+      $(element).find("option:selected").attr("value") ??
+      $(element)
+        .find("option")
+        .filter((_, option) => {
+          const value = cleanText($(option).attr("value") ?? "");
+          const label = cleanText($(option).text());
+          return value.length > 0 && !/선택|전체/.test(label);
+        })
+        .first()
+        .attr("value") ??
+      "";
+    fields[name] = selected;
+  });
 
   return fields;
 }
@@ -1106,15 +1141,36 @@ function targetIdFromFields(
 
 function extractLectureEvaluationSaveAction(html: string): string | undefined {
   const match =
-    /(?:form|document\.form1)\.action\s*=\s*['"]([^'"]*Svl02[^'"]*)['"]/i.exec(html) ??
-    /action\s*=\s*['"]([^'"]*Svl02set[^'"]*)['"]/i.exec(html);
+    /(?:form|frm|document\.form1)\.action\s*=\s*['"]([^'"]*Svl02(?:set|save)[^'"]*)['"]/i.exec(html) ??
+    /action\s*=\s*['"]([^'"]*Svl02(?:set|save)[^'"]*)['"]/i.exec(html) ??
+    /(?:form|frm|document\.form1)\.action\s*=\s*['"]([^'"]*Svl02[^'"]*)['"]/i.exec(html);
 
   return match?.[1];
 }
 
+function isLectureEvaluationSubmitted(
+  text: string,
+  scope: MsiLectureEvaluationScope
+): boolean {
+  if (/미완료/.test(text)) {
+    return false;
+  }
+
+  if (scope === "course") {
+    return /강의평가\s*\(완료됨\)|제출완료|평가완료/.test(text);
+  }
+
+  return /교육만족도\s*조사\s*\(완료됨\)|재학생\s*만족도\s*조사\s*\(완료됨\)|제출완료|평가완료/.test(text);
+}
+
 export function parseMsiLectureEvaluationPage(
   html: string,
-  options: { menuName?: string; pageUrl?: string } = {}
+  options: {
+    menuName?: string;
+    pageUrl?: string;
+    targetTitlePrefix?: string;
+    scope?: MsiLectureEvaluationScope;
+  } = {}
 ): MsiLectureEvaluationListResult {
   const $ = load(html);
   const warnings: string[] = [];
@@ -1132,24 +1188,40 @@ export function parseMsiLectureEvaluationPage(
   selectedForms.each((index, form) => {
     const formHtml = $.html(form);
     const formItem = $(form);
-    const rawTitle =
+    const parsedTitle =
       cleanText(formItem.find(".data-title, legend, h1, h2, h3, caption").first().text()) ||
       cleanText(formItem.closest(".card-item, .basic, .card").find(".data-title").first().text()) ||
       cleanText(formItem.text()).slice(0, 80) ||
       `${options.menuName ?? "강의평가"} ${index + 1}`;
+    const rawTitle =
+      options.targetTitlePrefix && !parsedTitle.includes(options.targetTitlePrefix)
+        ? `${options.targetTitlePrefix} ${parsedTitle}`
+        : parsedTitle;
     const action = cleanText(formItem.attr("action") ?? "");
     const hiddenFields = extractLectureEvaluationHiddenFields(formHtml);
     const questions = parseMsiLectureEvaluationQuestions(formHtml);
+    if (questions.length === 0) {
+      return;
+    }
     const fullText = cleanText(formItem.text());
-    const submitted = /제출완료|평가완료|완료/.test(fullText);
     const unavailable = /기간이 아닙니다|대상이 아닙니다|평가불가|마감/.test(fullText);
     const submitAction =
       saveAction && /savePage\(\)/.test(formHtml) ? saveAction : action;
+    const scope =
+      options.scope ??
+      inferLectureEvaluationScope(
+        `${options.pageUrl ?? ""} ${submitAction} ${options.menuName ?? ""} ${rawTitle}`
+      );
+    const checkedAnswerCount = formItem.find('input[type="radio"]:checked').length;
+    const submitted =
+      (scope === "course" && checkedAnswerCount > 0) ||
+      isLectureEvaluationSubmitted(fullText, scope);
 
     targets.push({
       id: targetIdFromFields(hiddenFields, String(index + 1)),
       title: rawTitle,
       variant: inferLectureEvaluationVariant(`${options.menuName ?? ""} ${rawTitle}`),
+      scope,
       submitted,
       available: !submitted && !unavailable && questions.length > 0,
       ...(submitAction
@@ -1165,6 +1237,127 @@ export function parseMsiLectureEvaluationPage(
   }
 
   return { targets, warnings };
+}
+
+interface LectureEvaluationPage {
+  menu: MsiMenuSpec;
+  html: string;
+  pageUrl: string;
+  targetTitlePrefix?: string;
+  scope?: MsiLectureEvaluationScope;
+}
+
+interface LectureEvaluationCourseOption {
+  selectName: string;
+  value: string;
+  label: string;
+  actionUrl: string;
+  fields: Record<string, string>;
+}
+
+function extractLectureEvaluationTabPaths(html: string): string[] {
+  const paths = new Set<string>();
+  const pattern =
+    /(?:["'(=]\s*)?((?:\/servlet)?\/?su\/sug\/Sug00Svl02(?:init|select|get|show)[A-Za-z0-9_]*Satis[^"'()<>\s]*)/gi;
+  for (const match of html.matchAll(pattern)) {
+    const raw = match[1]?.replace(/&amp;/g, "&");
+    if (!raw || /결과|result/i.test(raw)) {
+      continue;
+    }
+    paths.add(raw.startsWith("/") ? raw : `/${raw}`);
+  }
+
+  return [...paths];
+}
+
+function siblingLectureEvaluationMenus(menu: MsiMenuSpec, html: string): MsiMenuSpec[] {
+  const paths = new Set<string>(extractLectureEvaluationTabPaths(html));
+  for (const match of html.matchAll(/changePage\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    const suffix = match[1];
+    if (suffix) {
+      paths.add(`/servlet/su/sug/Sug00Svl02${suffix}`);
+    }
+  }
+  if (menu.urlPath.includes("Sug00Svl02initDeptSatis")) {
+    paths.add("/servlet/su/sug/Sug00Svl02initStdSatis");
+    paths.add("/servlet/su/sug/Sug00Svl02initEvalLecture");
+  }
+
+  return [...paths]
+    .filter((path) => path !== menu.urlPath)
+    .map((path) => ({
+      ...menu,
+      name: path.includes("EvalLecture") ? "강의평가" : menu.name,
+      urlPath: path
+    }));
+}
+
+function selectLooksLikeCourseSelector(
+  $: CheerioAPI,
+  element: AnyNode
+): boolean {
+  const select = $(element);
+  const name = cleanText(select.attr("name") ?? "");
+  const id = cleanText(select.attr("id") ?? "");
+  const nearby = cleanText(
+    `${select.closest("tr, .flex-table-item, .form-group, .row, li, div").text()} ${name} ${id}`
+  );
+  const hasSatisfactionOptions = select
+    .find("option")
+    .toArray()
+    .some((option) => {
+      const label = cleanText($(option).text());
+      return classifySatisfactionLabel(label) !== undefined;
+    });
+  if (/평가|만족/.test(nearby) && hasSatisfactionOptions) {
+    return false;
+  }
+
+  return /수강|강좌|과목|교과|강의|curi|subj|lect|course/i.test(nearby);
+}
+
+function extractLectureEvaluationCourseOptions(
+  html: string,
+  pageUrl: string
+): LectureEvaluationCourseOption[] {
+  const $ = load(html);
+  const options: LectureEvaluationCourseOption[] = [];
+
+  $("select[name]").each((_, element) => {
+    if (!selectLooksLikeCourseSelector($, element)) {
+      return;
+    }
+    const select = $(element);
+    const selectName = select.attr("name");
+    if (!selectName) {
+      return;
+    }
+    const form = select.closest("form");
+    const formHtml = form.length > 0 ? $.html(form) : html;
+    const fields = extractLectureEvaluationHiddenFields(formHtml);
+    const action = cleanText(form.attr("action") ?? "") || pageUrl;
+    const actionUrl = resolveMsiFormAction(action, "MSI 강의평가 수강강좌 선택");
+
+    select.find("option").each((_, option) => {
+      const value = cleanText($(option).attr("value") ?? "");
+      const label = cleanText($(option).text());
+      if (!value || !label || /선택|전체/.test(label)) {
+        return;
+      }
+      options.push({
+        selectName,
+        value,
+        label,
+        actionUrl,
+        fields: {
+          ...fields,
+          [selectName]: value
+        }
+      });
+    });
+  });
+
+  return options;
 }
 
 function buildLectureEvaluationPayload(
@@ -1195,7 +1388,7 @@ function buildLectureEvaluationPayload(
 async function loadLectureEvaluationPages(
   client: MjuMsiClient,
   credentials: ResolvedLmsCredentials
-): Promise<Array<{ menu: MsiMenuSpec; html: string }>> {
+): Promise<LectureEvaluationPage[]> {
   const menuItems = await loadMsiMenuSnapshot(client, credentials);
   const discovered = menuItems
     .filter(
@@ -1213,14 +1406,69 @@ async function loadLectureEvaluationPages(
       submitMode: item.source === "side" ? "sideform" : "form1"
     }));
   const menus = discovered.length > 0 ? discovered : [MSI_LECTURE_EVALUATION_MENU];
-  const pages: Array<{ menu: MsiMenuSpec; html: string }> = [];
+  const pages: LectureEvaluationPage[] = [];
+  const seenPageKeys = new Set<string>();
 
   for (const menu of menus) {
     const { pageResponse } = await openMsiMenu(client, credentials, menu);
-    pages.push({ menu, html: pageResponse.text });
+    pages.push({
+      menu,
+      html: pageResponse.text,
+      pageUrl: menu.urlPath,
+      scope: inferLectureEvaluationScope(`${menu.urlPath} ${menu.name}`)
+    });
+    seenPageKeys.add(menu.urlPath);
+
+    for (const siblingMenu of siblingLectureEvaluationMenus(menu, pageResponse.text)) {
+      if (seenPageKeys.has(siblingMenu.urlPath)) {
+        continue;
+      }
+      try {
+        const { pageResponse: siblingResponse } = await openMsiMenu(
+          client,
+          credentials,
+          siblingMenu
+        );
+        pages.push({
+          menu: siblingMenu,
+          html: siblingResponse.text,
+          pageUrl: siblingMenu.urlPath,
+          scope: inferLectureEvaluationScope(`${siblingMenu.urlPath} ${siblingMenu.name}`)
+        });
+        seenPageKeys.add(siblingMenu.urlPath);
+      } catch {
+        // 일부 학기에는 강의별 평가 탭이 없거나 아직 열리지 않는다. 기존 교육만족도
+        // 흐름을 유지하기 위해 탭 보조 조회 실패는 list 경고 대신 무시한다.
+      }
+    }
   }
 
-  return pages;
+  const expandedPages: LectureEvaluationPage[] = [...pages];
+  const seenCourseKeys = new Set<string>();
+  for (const page of pages) {
+    if (!page.pageUrl.includes("initEvalLecture")) {
+      continue;
+    }
+    const courseOptions = extractLectureEvaluationCourseOptions(page.html, page.pageUrl);
+    for (const courseOption of courseOptions) {
+      const key = `${courseOption.actionUrl}:${courseOption.selectName}:${courseOption.value}`;
+      if (seenCourseKeys.has(key)) {
+        continue;
+      }
+      seenCourseKeys.add(key);
+      const response = await client.postForm(courseOption.actionUrl, courseOption.fields);
+      assertSuccessfulResponse(response, `MSI 강의평가 수강강좌 ${courseOption.label}`);
+      expandedPages.push({
+        menu: page.menu,
+        html: response.text,
+        pageUrl: courseOption.actionUrl,
+        targetTitlePrefix: courseOption.label,
+        scope: "course"
+      });
+    }
+  }
+
+  return expandedPages;
 }
 
 export async function listMsiLectureEvaluations(
@@ -1234,7 +1482,9 @@ export async function listMsiLectureEvaluations(
   for (const page of pages) {
     const parsed = parseMsiLectureEvaluationPage(page.html, {
       menuName: page.menu.name,
-      pageUrl: page.menu.urlPath
+      pageUrl: page.pageUrl,
+      ...(page.targetTitlePrefix ? { targetTitlePrefix: page.targetTitlePrefix } : {}),
+      ...(page.scope ? { scope: page.scope } : {})
     });
     targets.push(...parsed.targets);
     if (parsed.targets.length > 0) {
@@ -1246,7 +1496,15 @@ export async function listMsiLectureEvaluations(
     warnings.push("강의평가 대상 폼을 찾지 못했습니다.");
   }
 
-  return { targets, warnings };
+  const uniqueTargets = new Map<string, MsiLectureEvaluationTarget>();
+  for (const target of targets) {
+    const key = `${target.scope}:${target.id}:${target.submitUrl ?? ""}`;
+    if (!uniqueTargets.has(key)) {
+      uniqueTargets.set(key, target);
+    }
+  }
+
+  return { targets: [...uniqueTargets.values()], warnings };
 }
 
 function selectLectureEvaluationTargets(
@@ -1297,7 +1555,7 @@ async function verifyLectureEvaluationSubmit(
   target: MsiLectureEvaluationTarget
 ): Promise<Record<string, unknown> | undefined> {
   if (
-    !target.submitUrl?.includes("Sug00Svl02setDeptSatis") ||
+    !/Sug00Svl02set(?:Dept|Std)Satis/.test(target.submitUrl ?? "") ||
     !target.hiddenFields.year ||
     !target.hiddenFields.smt
   ) {
@@ -1322,12 +1580,32 @@ async function verifyLectureEvaluationSubmit(
   assertSuccessfulResponse(response, "MSI 강의평가 제출 상태 확인");
 
   const status = JSON.parse(response.text) as Record<string, unknown>;
+  const expectedStatusKey =
+    target.scope === "department"
+      ? "dept"
+      : target.scope === "course"
+        ? "std"
+        : undefined;
   const completed =
     status.dept === "완료됨" ||
     status.std === "완료됨" ||
     status.eval === "완료됨";
 
-  if (!completed) {
+  if (expectedStatusKey && status[expectedStatusKey] !== "완료됨") {
+    if (target.scope === "course") {
+      return {
+        ...status,
+        completed: false,
+        note:
+          "강의별 평가는 전체 수강강좌가 모두 저장되기 전까지 MSI 완료 상태가 미완료일 수 있습니다."
+      };
+    }
+    throw new Error(
+      `MSI 강의평가 제출 요청은 완료됐지만 저장 완료 상태를 확인하지 못했습니다: ${response.text}`
+    );
+  }
+
+  if (!expectedStatusKey && !completed) {
     throw new Error(
       `MSI 강의평가 제출 요청은 완료됐지만 저장 완료 상태를 확인하지 못했습니다: ${response.text}`
     );

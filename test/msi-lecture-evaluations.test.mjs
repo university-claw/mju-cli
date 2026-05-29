@@ -52,6 +52,7 @@ test("parseMsiLectureEvaluationPage extracts targets and satisfaction choices", 
     id: "0000",
     title: "0000 Synthetic Seminar 강의평가",
     variant: "regular",
+    scope: "department",
     submitted: false,
     available: true,
     submitUrl: "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02submitDeptSatis",
@@ -111,4 +112,46 @@ test("parseMsiLectureEvaluationPage follows savePage action overrides", () => {
     result.targets[0]?.submitUrl,
     "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02setDeptSatis"
   );
+  assert.equal(result.targets[0]?.scope, "department");
+});
+
+test("parseMsiLectureEvaluationPage extracts course lecture evaluation forms", () => {
+  const result = parseMsiLectureEvaluationPage(
+    `
+      <form name="form1" action="/servlet/su/sug/Sug00Svl02initEvalLecture" method="post">
+        <h2>강의평가</h2>
+        <select name="curiNum">
+          <option value="">수강 강좌 선택</option>
+          <option value="C001" selected>0001 Synthetic Course</option>
+        </select>
+        <input type="hidden" name="year" value="2026" />
+        <input type="hidden" name="smt" value="10" />
+        <label><input type="radio" name="q1" value="5" /> 매우만족</label>
+        <label><input type="radio" name="q1" value="4" /> 만족</label>
+        <label><input type="radio" name="q1" value="3" /> 보통</label>
+        <textarea name="opinion"></textarea>
+        <a href="javascript:savePage();">저장</a>
+      </form>
+      <script>
+        function savePage() {
+          document.form1.action='/servlet/su/sug/Sug00Svl02setEvalLecture';
+          document.form1.submit();
+        }
+      </script>
+    `,
+    {
+      menuName: "강의평가",
+      pageUrl: "/servlet/su/sug/Sug00Svl02initEvalLecture",
+      targetTitlePrefix: "0001 Synthetic Course"
+    }
+  );
+
+  assert.equal(result.targets.length, 1);
+  assert.equal(result.targets[0]?.scope, "course");
+  assert.equal(result.targets[0]?.id, "C001");
+  assert.equal(
+    result.targets[0]?.submitUrl,
+    "https://msi.mju.ac.kr/servlet/su/sug/Sug00Svl02setEvalLecture"
+  );
+  assert.equal(result.targets[0]?.hiddenFields.curiNum, "C001");
 });
