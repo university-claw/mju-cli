@@ -9,12 +9,19 @@ const LOGIN_SUCCESS_MARKERS = [
 ];
 
 const PASSWORD_CHANGE_URL_MARKERS = [
-  "password",
-  "passwd",
-  "pwd",
+  "/sso/change/pw",
   "pwchange",
   "changepw",
   "change-pw"
+];
+
+const PASSWORD_CHANGE_PAGE_MARKERS = [
+  "password_change_interstitial",
+  "/sso/change/pw",
+  "cm_cg_id",
+  "\ucde8\uc18c",
+  "cancel",
+  "cancle"
 ];
 
 function looksLikeLoginPage(url: string, text: string): boolean {
@@ -52,6 +59,11 @@ export function looksLikePasswordChangeInterstitial(
   const url = response.url.toLowerCase();
   const text = response.text;
   const lowerText = text.toLowerCase();
+
+  if (looksLoggedIn(response)) {
+    return false;
+  }
+
   const hasPasswordMarker =
     lowerText.includes("password") ||
     lowerText.includes("passwd") ||
@@ -65,6 +77,10 @@ export function looksLikePasswordChangeInterstitial(
 
   return (
     PASSWORD_CHANGE_URL_MARKERS.some((marker) => url.includes(marker)) ||
-    (hasPasswordMarker && hasChangeMarker)
+    (hasPasswordMarker &&
+      hasChangeMarker &&
+      PASSWORD_CHANGE_PAGE_MARKERS.some(
+        (marker) => lowerText.includes(marker) || text.includes(marker)
+      ))
   );
 }
