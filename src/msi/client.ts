@@ -37,6 +37,45 @@ interface RequestOptions {
   followRedirect?: boolean;
 }
 
+type PasswordChangeContinuationResult =
+  | { ok: true; response: DecodedResponse }
+  | {
+      ok: false;
+      detail:
+        | "password_change_cancel_url_missing"
+        | "password_change_cancel_request_failed"
+        | "password_change_cancel_still_interstitial"
+        | "password_change_cancel_not_logged_in";
+      cause?: unknown;
+    };
+
+function msiDiagnosticError(code: string, message: string, cause?: unknown): Error {
+  const error = new Error(`[${code}] ${message}`);
+  if (cause !== undefined) {
+    (error as Error & { cause?: unknown }).cause = cause;
+  }
+  return error;
+}
+
+function isMsiDiagnosticError(error: unknown): boolean {
+  return error instanceof Error && /^\[msi\.[a-zA-Z0-9_.-]+\]/u.test(error.message);
+}
+
+function describeUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function withMsiStep<T>(code: string, action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    if (isMsiDiagnosticError(error)) {
+      throw error;
+    }
+    throw msiDiagnosticError(code, describeUnknownError(error), error);
+  }
+}
+
 function toDecodedResponse(response: Response<Buffer>): DecodedResponse {
   return {
     statusCode: response.statusCode,
@@ -141,7 +180,11 @@ export function resolveMsiPasswordChangeCancelUrl(
     const label = `${node.text()} ${node.attr("value") ?? ""} ${
       node.attr("title") ?? ""
     } ${node.attr("aria-label") ?? ""}`.toLowerCase();
-    if (!label.includes("취소") && !label.includes("cancel") && !label.includes("cancle")) {
+    if (
+      !label.includes("취소") &&
+      !label.includes("cancel") &&
+      !label.includes("cancle")
+    ) {
       continue;
     }
 
@@ -273,14 +316,31 @@ export class MjuMsiClient {
 
   private async continuePastPasswordChangeInterstitial(
     response: DecodedResponse
-  ): Promise<DecodedResponse | null> {
+  ): Promise<PasswordChangeContinuationResult> {
     const cancelUrl = resolveMsiPasswordChangeCancelUrl(response);
     if (!cancelUrl) {
-      return null;
+      return { ok: false, detail: "password_change_cancel_url_missing" };
     }
 
-    const continued = await this.getPage(cancelUrl, { followRedirect: true });
-    return looksLikePasswordChangeInterstitial(continued) ? null : continued;
+    let continued: DecodedResponse;
+    try {
+      continued = await this.getPage(cancelUrl, { followRedirect: true });
+    } catch (error) {
+      return {
+        ok: false,
+        detail: "password_change_cancel_request_failed",
+        cause: error
+      };
+    }
+
+    if (looksLikePasswordChangeInterstitial(continued)) {
+      return { ok: false, detail: "password_change_cancel_still_interstitial" };
+    }
+    if (!looksLoggedIn(continued)) {
+      return { ok: false, detail: "password_change_cancel_not_logged_in" };
+    }
+
+    return { ok: true, response: continued };
   }
 
   async saveMainHtml(html: string): Promise<void> {
@@ -343,28 +403,41 @@ export class MjuMsiClient {
     userId: string,
     password: string
   ): Promise<DecodedResponse> {
-    let response = await this.getPage(MSI_BASE, { followRedirect: true });
+    let response = await withMsiStep("msi.login.initial_page_fetch_failed", () =>
+      this.getPage(MSI_BASE, { followRedirect: true })
+    );
     let $ = load(response.text);
     let csrf = $('input[name="_csrf"]').attr("value") ?? "";
 
-    response = await this.postForm(
-      MSI_LOGIN_SECURITY_URL,
-      {
-        code: "",
-        _csrf: csrf
-      },
-      { followRedirect: false }
+    response = await withMsiStep(
+      "msi.login.initial_login_security_post_failed",
+      () =>
+        this.postForm(
+          MSI_LOGIN_SECURITY_URL,
+          {
+            code: "",
+            _csrf: csrf
+          },
+          { followRedirect: false }
+        )
     );
 
     const ssoEntryUrl =
       /location\.href\s*=\s*"([^"]+)"/.exec(response.text)?.[1] ??
       resolveRedirectUrl(response, MSI_BASE);
     if (!ssoEntryUrl) {
-      throw new Error("MSI 로그인 초기 브리지에서 SSO 이동 URL을 찾지 못했습니다.");
+      throw msiDiagnosticError(
+        "msi.login.sso_entry_url_missing",
+        "MSI login bridge did not expose an SSO entry URL"
+      );
     }
 
-    const ssoPage = await this.getPage(ssoEntryUrl, { followRedirect: true });
-    const ssoForm = this.extractSsoForm(ssoPage);
+    const ssoPage = await withMsiStep("msi.login.sso_page_fetch_failed", () =>
+      this.getPage(ssoEntryUrl, { followRedirect: true })
+    );
+    const ssoForm = await withMsiStep("msi.login.sso_form_parse_failed", async () =>
+      this.extractSsoForm(ssoPage)
+    );
     const { keyStr, key, iv } = genSsoKeyMaterial();
     const encsymka = encryptSessionKeyForSso(
       `${keyStr},${Date.now()}`,
@@ -373,62 +446,87 @@ export class MjuMsiClient {
     const pwEnc = encryptPasswordForSso(password.trim(), key, iv);
     const loginUrl = new URL(ssoForm.action, ssoPage.url).toString();
 
-    const ssoLoginResponse = await this.postForm(
-      loginUrl,
-      {
-        user_id: userId,
-        pw: "",
-        user_id_enc: "",
-        pw_enc: pwEnc,
-        encsymka,
-        c_r_t: ssoForm.c_r_t
-      },
-      { followRedirect: false }
+    const ssoLoginResponse = await withMsiStep(
+      "msi.login.sso_login_post_failed",
+      () =>
+        this.postForm(
+          loginUrl,
+          {
+            user_id: userId,
+            pw: "",
+            user_id_enc: "",
+            pw_enc: pwEnc,
+            encsymka,
+            c_r_t: ssoForm.c_r_t
+          },
+          { followRedirect: false }
+        )
     );
 
     const callbackUrl = resolveMsiLoginContinuationUrl(ssoLoginResponse, loginUrl);
     if (!callbackUrl) {
-      throw new Error("MSI SSO 로그인 후 callback URL을 찾지 못했습니다.");
+      throw msiDiagnosticError(
+        "msi.login.sso_callback_url_missing",
+        "MSI SSO login did not return a callback URL"
+      );
     }
 
-    response = await this.getPage(callbackUrl, { followRedirect: true });
+    response = await withMsiStep("msi.login.callback_page_fetch_failed", () =>
+      this.getPage(callbackUrl, { followRedirect: true })
+    );
     $ = load(response.text);
     const code = $('input[name="code"]').attr("value") ?? "";
     csrf = $('input[name="_csrf"]').attr("value") ?? "";
     if (!code || !csrf) {
-      throw new Error("MSI callback 단계에서 code/_csrf 를 찾지 못했습니다.");
+      throw msiDiagnosticError(
+        "msi.login.callback_fields_missing",
+        "MSI callback page did not include code/_csrf fields"
+      );
     }
 
-    response = await this.postForm(
-      MSI_LOGIN_SECURITY_URL,
-      {
-        code,
-        _csrf: csrf
-      },
-      { followRedirect: false }
+    response = await withMsiStep(
+      "msi.login.callback_login_security_post_failed",
+      () =>
+        this.postForm(
+          MSI_LOGIN_SECURITY_URL,
+          {
+            code,
+            _csrf: csrf
+          },
+          { followRedirect: false }
+        )
     );
 
     $ = load(response.text);
     const securityCsrf = $('input[name="_csrf"]').attr("value") ?? "";
     const normalizedUserId = $('input[name="user_id"]').attr("value") ?? userId;
     if (!securityCsrf) {
-      throw new Error("MSI login_security 후반 단계에서 _csrf 를 찾지 못했습니다.");
+      throw msiDiagnosticError(
+        "msi.login.security_check_csrf_missing",
+        "MSI login_security confirmation page did not include _csrf"
+      );
     }
 
-    const securityCheckResponse = await this.postForm(
-      MSI_SECURITY_CHECK_URL,
-      {
-        user_id: normalizedUserId,
-        _csrf: securityCsrf
-      },
-      { followRedirect: false }
+    const securityCheckResponse = await withMsiStep(
+      "msi.login.security_check_post_failed",
+      () =>
+        this.postForm(
+          MSI_SECURITY_CHECK_URL,
+          {
+            user_id: normalizedUserId,
+            _csrf: securityCsrf
+          },
+          { followRedirect: false }
+        )
     );
 
     const postSecurityUrl =
       resolveRedirectUrl(securityCheckResponse, MSI_BASE) ?? MSI_MAIN_URL;
-    const mainResponse = await this.getPage(postSecurityUrl, {
-      followRedirect: true
-    });
+    const mainResponse = await withMsiStep("msi.login.main_page_fetch_failed", () =>
+      this.getPage(postSecurityUrl, {
+        followRedirect: true
+      })
+    );
 
     return mainResponse;
   }
@@ -442,18 +540,18 @@ export class MjuMsiClient {
       try {
         const mainFromSavedSession = await this.fetchMainPage();
         if (looksLikePasswordChangeInterstitial(mainFromSavedSession)) {
-          const continued = await this.continuePastPasswordChangeInterstitial(
+          const continuation = await this.continuePastPasswordChangeInterstitial(
             mainFromSavedSession
           );
-          if (continued && looksLoggedIn(continued)) {
+          if (continuation.ok) {
             await this.sessionStore.save(this.cookieJar);
             return {
-              mainResponse: continued,
+              mainResponse: continuation.response,
               usedSavedSession: true
             };
           }
           console.warn(
-            "[msi] saved session landed on a password-change interstitial, clearing saved session and retrying fresh login"
+            `[msi.saved_session.${continuation.detail}] saved session password-change continuation failed, clearing saved session and retrying fresh login`
           );
         }
         if (looksLoggedIn(mainFromSavedSession)) {
@@ -476,8 +574,9 @@ export class MjuMsiClient {
         ) {
           throw err;
         }
+        const safeCode = String(code ?? "unknown").replace(/[^a-zA-Z0-9_-]/gu, "_");
         console.warn(
-          `[msi] saved session fetchMainPage failed (${code}), falling back to fresh login`
+          `[msi.saved_session.fetch_main_page_${safeCode}] saved session fetchMainPage failed, falling back to fresh login`
         );
       }
 
@@ -488,13 +587,15 @@ export class MjuMsiClient {
 
     let mainResponse = await this.login(userId, password);
     if (looksLikePasswordChangeInterstitial(mainResponse)) {
-      const continued = await this.continuePastPasswordChangeInterstitial(mainResponse);
-      if (continued) {
-        mainResponse = continued;
+      const continuation = await this.continuePastPasswordChangeInterstitial(mainResponse);
+      if (continuation.ok) {
+        mainResponse = continuation.response;
       } else {
         await this.clearSavedSession();
-        throw new Error(
-          "[msi.login.password_change_interstitial_detected] MSI login landed on a password-change interstitial"
+        throw msiDiagnosticError(
+          `msi.login.${continuation.detail}`,
+          "MSI login landed on a password-change interstitial and continuation failed",
+          continuation.cause
         );
       }
     }
