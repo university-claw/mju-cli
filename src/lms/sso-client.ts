@@ -30,9 +30,102 @@ import type {
 
 export type FormPayloadValue = string | number | boolean;
 
-export function resolveSsoPasswordChangeContinuationUrl(
+function normalizeHtmlUrl(value: string): string {
+  return value.replace(/&amp;/giu, "&").trim();
+}
+
+function resolveSsoAuthUrl(rawUrl: string): string | null {
+  const normalized = normalizeHtmlUrl(rawUrl);
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const url = new URL(normalized, SSO_BASE);
+    if (
+      url.hostname === "sso.mju.ac.kr" &&
+      url.pathname.toLowerCase() === "/sso/auth"
+    ) {
+      return url.toString();
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function resolveCancelScriptUrl(text: string): string | null {
+  const locationPatterns = [
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/iu,
+    /(?:window\.)?location\.replace\(\s*["']([^"']+)["']\s*\)/iu
+  ];
+
+  for (const pattern of locationPatterns) {
+    const candidate = pattern.exec(text)?.[1];
+    const url = candidate ? resolveSsoAuthUrl(candidate) : null;
+    if (url) {
+      return url;
+    }
+  }
+
+  const concatenatedCancelUrl =
+    text.match(
+      /(?:cancel|cancle)[A-Za-z0-9_$]*\s*=\s*["']([^"']+)["']\s*\+\s*["']([^"']+)["']\s*\+\s*\[\s*["']([^"']+)["']\s*\]/iu
+    ) ??
+    text.match(
+      /(?:cancel|cancle)[A-Za-z0-9_$]*\s*=\s*["']([^"']+)["']\s*\+\s*\[\s*["']([^"']+)["']\s*\]/iu
+    );
+
+  if (concatenatedCancelUrl?.[1]) {
+    const candidate =
+      concatenatedCancelUrl.length >= 4 && concatenatedCancelUrl[3]
+        ? `${concatenatedCancelUrl[1]}${concatenatedCancelUrl[2] ?? ""}${concatenatedCancelUrl[3]}`
+        : `${concatenatedCancelUrl[1]}${concatenatedCancelUrl[2] ?? ""}`;
+    const url = resolveSsoAuthUrl(candidate);
+    if (url) {
+      return url;
+    }
+  }
+
+  const directCancelUrl = text.match(
+    /(?:cancel|cancle)[A-Za-z0-9_$]*\s*=\s*["']([^"']+)["']/iu
+  )?.[1];
+  return directCancelUrl ? resolveSsoAuthUrl(directCancelUrl) : null;
+}
+
+export function resolveSsoPasswordChangeCancelUrl(
   response: Pick<DecodedResponse, "url" | "text">
 ): string | null {
+  const $ = load(response.text);
+
+  for (const element of $("a, button, input").toArray()) {
+    const node = $(element);
+    const label = `${node.text()} ${node.attr("value") ?? ""} ${
+      node.attr("title") ?? ""
+    } ${node.attr("aria-label") ?? ""}`.toLowerCase();
+    if (!label.includes("취소") && !label.includes("cancel") && !label.includes("cancle")) {
+      continue;
+    }
+
+    for (const attr of ["href", "data-url", "formaction"]) {
+      const url = resolveSsoAuthUrl(node.attr(attr) ?? "");
+      if (url) {
+        return url;
+      }
+    }
+
+    const onclickUrl = resolveCancelScriptUrl(node.attr("onclick") ?? "");
+    if (onclickUrl) {
+      return onclickUrl;
+    }
+  }
+
+  const scriptedCancelUrl = resolveCancelScriptUrl(response.text);
+  if (scriptedCancelUrl) {
+    return scriptedCancelUrl;
+  }
+
   let cmCgId: string | null = null;
 
   try {
@@ -55,6 +148,12 @@ export function resolveSsoPasswordChangeContinuationUrl(
   return cmCgId
     ? `${SSO_BASE}/sso/auth?cm_cg_id=${encodeURIComponent(cmCgId)}`
     : null;
+}
+
+export function resolveSsoPasswordChangeContinuationUrl(
+  response: Pick<DecodedResponse, "url" | "text">
+): string | null {
+  return resolveSsoPasswordChangeCancelUrl(response);
 }
 
 function toDecodedResponse(response: Response<Buffer>): DecodedResponse {

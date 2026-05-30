@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { resolveSsoPasswordChangeContinuationUrl } from "../dist/lms/sso-client.js";
+import {
+  resolveSsoPasswordChangeCancelUrl,
+  resolveSsoPasswordChangeContinuationUrl
+} from "../dist/lms/sso-client.js";
 
 test("resolveSsoPasswordChangeContinuationUrl uses cm_cg_id from change password URL", () => {
   assert.equal(
@@ -13,7 +16,7 @@ test("resolveSsoPasswordChangeContinuationUrl uses cm_cg_id from change password
   );
 });
 
-test("resolveSsoPasswordChangeContinuationUrl uses cm_cg_id from change password HTML", () => {
+test("resolveSsoPasswordChangeContinuationUrl uses the cancel URL from change password HTML", () => {
   assert.equal(
     resolveSsoPasswordChangeContinuationUrl({
       url: "https://sso.mju.ac.kr/sso/change/pw",
@@ -24,7 +27,38 @@ test("resolveSsoPasswordChangeContinuationUrl uses cm_cg_id from change password
         </script>
       `
     }),
-    "https://sso.mju.ac.kr/sso/auth?cm_cg_id=FROM_ACTION"
+    "https://sso.mju.ac.kr/sso/auth?cm_cg_id=FROM_SCRIPT"
+  );
+});
+
+test("resolveSsoPasswordChangeCancelUrl prefers the explicit cancel URL", () => {
+  assert.equal(
+    resolveSsoPasswordChangeCancelUrl({
+      url: "https://sso.mju.ac.kr/sso/change/pw",
+      text: `
+        <form action="/sso/change/pw?cm_cg_id=CHANGE_FORM" method="POST"></form>
+        <button onclick="location.href='/sso/auth?cm_cg_id=BUTTON_CANCEL'">취소</button>
+        <script>
+          var cancleUrl = '/sso/auth'+'?cm_cg_id='+["SCRIPT_CANCEL"];
+        </script>
+      `
+    }),
+    "https://sso.mju.ac.kr/sso/auth?cm_cg_id=BUTTON_CANCEL"
+  );
+});
+
+test("resolveSsoPasswordChangeCancelUrl follows misspelled cancleUrl scripts", () => {
+  assert.equal(
+    resolveSsoPasswordChangeCancelUrl({
+      url: "https://sso.mju.ac.kr/sso/change/pw",
+      text: `
+        <form action="/sso/change/pw?cm_cg_id=CHANGE_FORM" method="POST"></form>
+        <script>
+          var cancleUrl = '/sso/auth'+'?cm_cg_id='+["SCRIPT_CANCEL"];
+        </script>
+      `
+    }),
+    "https://sso.mju.ac.kr/sso/auth?cm_cg_id=SCRIPT_CANCEL"
   );
 });
 
