@@ -59,9 +59,29 @@ export function createMsiCommand(getGlobals: () => GlobalOptions): Command {
             timetable: ["get", "+last-class-times"],
             grades: ["current", "history", "course-scores"],
             graduation: ["requirements"],
-            lectureEvaluations: ["list", "preview", "submit"]
+            lectureEvaluations: ["list", "preview", "submit"],
+            session: ["logout"]
           },
           planned: {}
+        },
+        globals.format
+      );
+    });
+
+  msi
+    .command("logout")
+    .description("Delete saved MSI session only")
+    .action(async () => {
+      const globals = getGlobals();
+      const config = resolveMsiRuntimeConfig({ appDataDir: globals.appDir });
+      const client = new MjuMsiClient(config);
+      const deletedSession = await client.clearSavedSession();
+
+      printData(
+        {
+          service: "msi",
+          sessionFile: config.sessionFile,
+          deletedSession
         },
         globals.format
       );

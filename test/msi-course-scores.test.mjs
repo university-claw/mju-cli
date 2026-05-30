@@ -330,3 +330,11 @@ test("createMsiCommand exposes course-scores command", () => {
     ["--year", "--term-code"]
   );
 });
+
+test("createMsiCommand exposes MSI logout command", () => {
+  const command = createMsiCommand(() => ({ format: "json" }));
+  const logout = command.commands.find((child) => child.name() === "logout");
+
+  assert.ok(logout);
+  assert.equal(logout.description(), "Delete saved MSI session only");
+});
