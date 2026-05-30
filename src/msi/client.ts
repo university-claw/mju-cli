@@ -80,6 +80,92 @@ export function resolveMsiLoginContinuationUrl(
   return passwordChangeContinuationUrl ?? redirectUrl;
 }
 
+function normalizeHtmlUrl(value: string): string {
+  return value.replace(/&amp;/giu, "&").trim();
+}
+
+function resolveSafeMsiCancelUrl(rawUrl: string, baseUrl: string): string | undefined {
+  const normalized = normalizeHtmlUrl(rawUrl);
+  if (!normalized) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(normalized, baseUrl);
+    const lowerUrl = url.toString().toLowerCase();
+    const allowedHost =
+      url.hostname === "msi.mju.ac.kr" || url.hostname === "sso.mju.ac.kr";
+    const passwordChangeTarget =
+      lowerUrl.includes("/sso/change/pw") ||
+      lowerUrl.includes("password") ||
+      lowerUrl.includes("passwd") ||
+      lowerUrl.includes("pwd") ||
+      lowerUrl.includes("pwchange") ||
+      lowerUrl.includes("changepw") ||
+      lowerUrl.includes("change-pw");
+
+    return allowedHost && !passwordChangeTarget ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveMsiCancelScriptUrl(text: string, baseUrl: string): string | undefined {
+  const locationPatterns = [
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/iu,
+    /(?:window\.)?location\.replace\(\s*["']([^"']+)["']\s*\)/iu
+  ];
+
+  for (const pattern of locationPatterns) {
+    const candidate = pattern.exec(text)?.[1];
+    const url = candidate ? resolveSafeMsiCancelUrl(candidate, baseUrl) : undefined;
+    if (url) {
+      return url;
+    }
+  }
+
+  const directCancelUrl = text.match(
+    /(?:cancel|cancle)[A-Za-z0-9_$]*\s*=\s*["']([^"']+)["']/iu
+  )?.[1];
+  return directCancelUrl
+    ? resolveSafeMsiCancelUrl(directCancelUrl, baseUrl)
+    : undefined;
+}
+
+export function resolveMsiPasswordChangeCancelUrl(
+  response: Pick<DecodedResponse, "url" | "text">
+): string | undefined {
+  const ssoCancelUrl = resolveSsoPasswordChangeContinuationUrl(response);
+  if (ssoCancelUrl) {
+    return ssoCancelUrl;
+  }
+
+  const $ = load(response.text);
+  for (const element of $("a, button, input").toArray()) {
+    const node = $(element);
+    const label = `${node.text()} ${node.attr("value") ?? ""} ${
+      node.attr("title") ?? ""
+    } ${node.attr("aria-label") ?? ""}`.toLowerCase();
+    if (!label.includes("취소") && !label.includes("cancel") && !label.includes("cancle")) {
+      continue;
+    }
+
+    for (const attr of ["href", "data-url", "formaction"]) {
+      const url = resolveSafeMsiCancelUrl(node.attr(attr) ?? "", response.url);
+      if (url) {
+        return url;
+      }
+    }
+
+    const onclickUrl = resolveMsiCancelScriptUrl(node.attr("onclick") ?? "", response.url);
+    if (onclickUrl) {
+      return onclickUrl;
+    }
+  }
+
+  return undefined;
+}
+
 export class MjuMsiClient {
   private cookieJar = new CookieJar();
   private http;
@@ -178,6 +264,18 @@ export class MjuMsiClient {
 
   async fetchMainPage(): Promise<DecodedResponse> {
     return this.getPage(MSI_MAIN_URL);
+  }
+
+  private async continuePastPasswordChangeInterstitial(
+    response: DecodedResponse
+  ): Promise<DecodedResponse | null> {
+    const cancelUrl = resolveMsiPasswordChangeCancelUrl(response);
+    if (!cancelUrl) {
+      return null;
+    }
+
+    const continued = await this.getPage(cancelUrl, { followRedirect: true });
+    return looksLikePasswordChangeInterstitial(continued) ? null : continued;
   }
 
   async saveMainHtml(html: string): Promise<void> {
@@ -339,6 +437,16 @@ export class MjuMsiClient {
       try {
         const mainFromSavedSession = await this.fetchMainPage();
         if (looksLikePasswordChangeInterstitial(mainFromSavedSession)) {
+          const continued = await this.continuePastPasswordChangeInterstitial(
+            mainFromSavedSession
+          );
+          if (continued && looksLoggedIn(continued)) {
+            await this.sessionStore.save(this.cookieJar);
+            return {
+              mainResponse: continued,
+              usedSavedSession: true
+            };
+          }
           await this.clearSavedSession();
           throw new Error(
             "[msi.login.saved_session_password_change_interstitial_detected] MSI saved session landed on a password-change interstitial"
@@ -374,12 +482,17 @@ export class MjuMsiClient {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    const mainResponse = await this.login(userId, password);
+    let mainResponse = await this.login(userId, password);
     if (looksLikePasswordChangeInterstitial(mainResponse)) {
-      await this.clearSavedSession();
-      throw new Error(
-        "[msi.login.password_change_interstitial_detected] MSI login landed on a password-change interstitial"
-      );
+      const continued = await this.continuePastPasswordChangeInterstitial(mainResponse);
+      if (continued) {
+        mainResponse = continued;
+      } else {
+        await this.clearSavedSession();
+        throw new Error(
+          "[msi.login.password_change_interstitial_detected] MSI login landed on a password-change interstitial"
+        );
+      }
     }
     if (looksLoggedIn(mainResponse)) {
       await this.sessionStore.save(this.cookieJar);
