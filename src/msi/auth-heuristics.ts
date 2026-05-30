@@ -5,7 +5,16 @@ const LOGIN_SUCCESS_MARKERS = [
   "btn-snb-item",
   "left-menu-list",
   "Sys01Svl03logout",
-  "로그아웃"
+  "\ub85c\uadf8\uc544\uc6c3"
+];
+
+const PASSWORD_CHANGE_URL_MARKERS = [
+  "password",
+  "passwd",
+  "pwd",
+  "pwchange",
+  "changepw",
+  "change-pw"
 ];
 
 function looksLikeLoginPage(url: string, text: string): boolean {
@@ -15,7 +24,7 @@ function looksLikeLoginPage(url: string, text: string): boolean {
     url.includes("login_security") ||
     url.includes("sso/auth") ||
     lowerText.includes("signin-form") ||
-    text.includes("통합로그인") ||
+    text.includes("\ud1b5\ud569\ub85c\uadf8\uc778") ||
     lowerText.includes("integrated login")
   );
 }
@@ -34,5 +43,28 @@ export function looksLoggedIn(
   return LOGIN_SUCCESS_MARKERS.some(
     (marker) =>
       url.includes(marker.toLowerCase()) || lowerText.includes(marker.toLowerCase())
+  );
+}
+
+export function looksLikePasswordChangeInterstitial(
+  response: Pick<DecodedResponse, "url" | "text">
+): boolean {
+  const url = response.url.toLowerCase();
+  const text = response.text;
+  const lowerText = text.toLowerCase();
+  const hasPasswordMarker =
+    lowerText.includes("password") ||
+    lowerText.includes("passwd") ||
+    lowerText.includes("pwd") ||
+    text.includes("\ube44\ubc00\ubc88\ud638");
+  const hasChangeMarker =
+    lowerText.includes("change") ||
+    lowerText.includes("update") ||
+    text.includes("\ubcc0\uacbd") ||
+    text.includes("\uc218\uc815");
+
+  return (
+    PASSWORD_CHANGE_URL_MARKERS.some((marker) => url.includes(marker)) ||
+    (hasPasswordMarker && hasChangeMarker)
   );
 }
