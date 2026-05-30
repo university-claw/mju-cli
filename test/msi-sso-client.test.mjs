@@ -65,6 +65,19 @@ test("resolveMsiPasswordChangeCancelUrl follows the explicit MSI cancel button",
   );
 });
 
+test("resolveMsiPasswordChangeCancelUrl prefers MSI main over SSO cm_cg_id fallback", () => {
+  assert.equal(
+    resolveMsiPasswordChangeCancelUrl({
+      url: "https://sso.mju.ac.kr/sso/change/pw?cm_cg_id=CD43BE4D33B8D687C89EC2C5059A706C",
+      text: `
+        <p>비밀번호를 변경해주세요.</p>
+        <input type="button" value="취소" onclick="location.href='https://msi.mju.ac.kr/servlet/security/MySecurityStart'">
+      `
+    }),
+    "https://msi.mju.ac.kr/servlet/security/MySecurityStart"
+  );
+});
+
 test("resolveMsiPasswordChangeCancelUrl rejects password-change targets", () => {
   assert.equal(
     resolveMsiPasswordChangeCancelUrl({
