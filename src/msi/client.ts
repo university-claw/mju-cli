@@ -135,11 +135,6 @@ function resolveMsiCancelScriptUrl(text: string, baseUrl: string): string | unde
 export function resolveMsiPasswordChangeCancelUrl(
   response: Pick<DecodedResponse, "url" | "text">
 ): string | undefined {
-  const ssoCancelUrl = resolveSsoPasswordChangeContinuationUrl(response);
-  if (ssoCancelUrl) {
-    return ssoCancelUrl;
-  }
-
   const $ = load(response.text);
   for (const element of $("a, button, input").toArray()) {
     const node = $(element);
@@ -163,7 +158,17 @@ export function resolveMsiPasswordChangeCancelUrl(
     }
   }
 
-  return undefined;
+  const mainStartMatch = response.text.match(
+    /https?:\/\/msi\.mju\.ac\.kr\/servlet\/security\/MySecurityStart|\/servlet\/security\/MySecurityStart/iu
+  )?.[0];
+  const mainStartUrl = mainStartMatch
+    ? resolveSafeMsiCancelUrl(mainStartMatch, response.url)
+    : undefined;
+  if (mainStartUrl) {
+    return mainStartUrl;
+  }
+
+  return resolveSsoPasswordChangeContinuationUrl(response) ?? undefined;
 }
 
 export class MjuMsiClient {
@@ -447,9 +452,8 @@ export class MjuMsiClient {
               usedSavedSession: true
             };
           }
-          await this.clearSavedSession();
-          throw new Error(
-            "[msi.login.saved_session_password_change_interstitial_detected] MSI saved session landed on a password-change interstitial"
+          console.warn(
+            "[msi] saved session landed on a password-change interstitial, clearing saved session and retrying fresh login"
           );
         }
         if (looksLoggedIn(mainFromSavedSession)) {
