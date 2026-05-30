@@ -19,7 +19,10 @@ import {
   encryptSessionKeyForSso,
   genSsoKeyMaterial
 } from "../lms/sso-crypto.js";
-import { looksLoggedIn } from "./auth-heuristics.js";
+import {
+  looksLikePasswordChangeInterstitial,
+  looksLoggedIn
+} from "./auth-heuristics.js";
 import {
   MSI_BASE,
   MSI_LOGIN_SECURITY_URL,
@@ -335,6 +338,12 @@ export class MjuMsiClient {
     if (options.preferSavedSession !== false && (await this.restoreSavedSession())) {
       try {
         const mainFromSavedSession = await this.fetchMainPage();
+        if (looksLikePasswordChangeInterstitial(mainFromSavedSession)) {
+          await this.clearSavedSession();
+          throw new Error(
+            "[msi.login.saved_session_password_change_interstitial_detected] MSI saved session landed on a password-change interstitial"
+          );
+        }
         if (looksLoggedIn(mainFromSavedSession)) {
           return {
             mainResponse: mainFromSavedSession,
@@ -366,6 +375,12 @@ export class MjuMsiClient {
     }
 
     const mainResponse = await this.login(userId, password);
+    if (looksLikePasswordChangeInterstitial(mainResponse)) {
+      await this.clearSavedSession();
+      throw new Error(
+        "[msi.login.password_change_interstitial_detected] MSI login landed on a password-change interstitial"
+      );
+    }
     if (looksLoggedIn(mainResponse)) {
       await this.sessionStore.save(this.cookieJar);
     } else {

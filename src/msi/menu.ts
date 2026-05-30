@@ -196,27 +196,41 @@ export async function openMsiMenu(
     credentials.userId,
     credentials.password
   );
-  const mainContext = extractMainContext(mainResponse.text);
+  await client.saveMainHtml(mainResponse.text);
+
+  let mainContext: MsiMainContext;
+  try {
+    mainContext = extractMainContext(mainResponse.text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[msi.open_menu.main_context_failed] ${message}`);
+  }
   const sysdiv = menu.sysdiv ?? "SCH";
   const subsysdiv = menu.subsysdiv ?? "SCH";
 
-  const prepResponse = await postMainForm(
-    client,
-    MSI_GO_BODY_PAGE_URL,
-    {
-      urlstr: menu.urlPath,
-      sysdiv,
-      subsysdiv,
-      folderdiv: menu.folderDiv,
-      pgmid: menu.pgmid
-    },
-    mainContext.csrfToken,
-    {
-      xhr: true,
-      referer: MSI_MAIN_URL
-    }
-  );
-  ensureSuccessfulResponse(prepResponse, `MSI ${menu.name} goBodyPage`);
+  let prepResponse: DecodedResponse;
+  try {
+    prepResponse = await postMainForm(
+      client,
+      MSI_GO_BODY_PAGE_URL,
+      {
+        urlstr: menu.urlPath,
+        sysdiv,
+        subsysdiv,
+        folderdiv: menu.folderDiv,
+        pgmid: menu.pgmid
+      },
+      mainContext.csrfToken,
+      {
+        xhr: true,
+        referer: MSI_MAIN_URL
+      }
+    );
+    ensureSuccessfulResponse(prepResponse, `MSI ${menu.name} goBodyPage`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[msi.open_menu.go_body_failed] ${message}`);
+  }
 
   const baseForm =
     menu.submitMode === "form1"
@@ -226,7 +240,9 @@ export async function openMsiMenu(
     ...baseForm,
     _csrf: baseForm._csrf || mainContext.csrfToken
   };
-  const pageResponse = await postMainForm(
+  let pageResponse: DecodedResponse;
+  try {
+    pageResponse = await postMainForm(
     client,
     new URL(menu.urlPath, MSI_BASE).toString(),
     form,
@@ -236,6 +252,11 @@ export async function openMsiMenu(
     }
   );
   ensureSuccessfulResponse(pageResponse, `MSI ${menu.name} 본문 조회`);
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[msi.open_menu.page_open_failed] ${message}`);
+  }
 
   return {
     mainResponse,
