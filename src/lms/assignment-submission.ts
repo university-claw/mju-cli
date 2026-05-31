@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { checkAssignmentSubmission } from "./assignment-submission-check.js";
 import { MjuLmsSsoClient } from "./sso-client.js";
+import type { FormPayloadValue } from "./sso-client.js";
 import type {
   AssignmentSubmitCheckResult,
   AssignmentSubmitContentSource,
@@ -27,6 +28,19 @@ export interface SubmitAssignmentOptions {
   dryRun?: boolean;
 }
 
+interface AssignmentUploadResponsePayload {
+  isError?: boolean;
+  message?: string;
+  seq1?: string | number;
+}
+
+interface AssignmentFinalSubmitResponsePayload {
+  isError?: boolean;
+  message?: string;
+  isKjkey?: boolean;
+  chSubjtMessage?: string;
+}
+
 function normalizeText(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -39,6 +53,119 @@ function sanitizeFileName(value: string): string {
     .replace(/-+/g, "-")
     .slice(0, 80)
     .replace(/^-|-$/g, "");
+}
+
+function parseLooseJson<T>(value: string | undefined): T | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const firstArrayIndex = trimmed.indexOf("[");
+  const firstObjectIndex = trimmed.indexOf("{");
+  let start = -1;
+  let end = -1;
+
+  if (
+    firstArrayIndex >= 0 &&
+    (firstObjectIndex < 0 || firstArrayIndex < firstObjectIndex)
+  ) {
+    start = firstArrayIndex;
+    end = trimmed.lastIndexOf("]");
+  } else if (firstObjectIndex >= 0) {
+    start = firstObjectIndex;
+    end = trimmed.lastIndexOf("}");
+  }
+
+  if (start < 0 || end < start) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1)) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseAssignmentUploadResponse(value: string | undefined): {
+  fileSeq?: string;
+  errorMessage?: string;
+} {
+  const payload = parseLooseJson<AssignmentUploadResponsePayload>(value);
+  const message = normalizeText(payload?.message);
+
+  if (payload?.isError) {
+    return {
+      errorMessage: message ?? "LMS가 파일 업로드를 거부했습니다."
+    };
+  }
+
+  const fileSeq =
+    payload?.seq1 === undefined ? undefined : String(payload.seq1).trim();
+
+  return {
+    ...(fileSeq ? { fileSeq } : {})
+  };
+}
+
+export function buildAssignmentFinalSubmitPayload(options: {
+  check: AssignmentSubmitCheckResult;
+  userId: string;
+  text?: string;
+  fileSeqs?: string[];
+}): Record<string, FormPayloadValue> {
+  const fileSeqs = options.fileSeqs?.filter((seq) => seq.trim().length > 0) ?? [];
+  const payload: Record<string, FormPayloadValue> = {
+    ud: options.userId,
+    ky: options.check.kjkey,
+    RT_SEQ: String(options.check.rtSeq),
+    returnData: "json",
+    JR_TXT: options.text ?? "",
+    FILE_SEQS: fileSeqs.join(","),
+    start: "",
+    display: "",
+    INPUT_METHOD_FLAG: "",
+    encoding: "utf-8"
+  };
+
+  if (options.check.submitContentSeq) {
+    payload.CONTENT_SEQ = options.check.submitContentSeq;
+  }
+
+  return payload;
+}
+
+export function parseAssignmentFinalSubmitResponse(
+  value: string | undefined
+): { ok: boolean; errorMessage?: string } {
+  const payload = parseLooseJson<AssignmentFinalSubmitResponsePayload>(value);
+  if (!payload) {
+    return { ok: true };
+  }
+
+  const message =
+    normalizeText(payload.message) ??
+    normalizeText(payload.chSubjtMessage) ??
+    undefined;
+
+  if (payload.isError) {
+    return {
+      ok: false,
+      errorMessage: message ?? "LMS가 과제 제출을 거부했습니다."
+    };
+  }
+
+  if (payload.isKjkey === false) {
+    return {
+      ok: false,
+      errorMessage:
+        message ??
+        "LMS가 현재 강의실 권한을 확인하지 못했습니다. ky/KJKEY 제출 컨텍스트가 일치하지 않습니다."
+    };
+  }
+
+  return { ok: true };
 }
 
 export function parseAssignmentSubmitContentSource(
@@ -187,7 +314,13 @@ async function uploadAssignmentFile(
   client: MjuLmsSsoClient,
   check: AssignmentSubmitCheckResult,
   filePath: string
-): Promise<{ path: string; fileName: string; statusCode: number; responseText?: string }> {
+): Promise<{
+  path: string;
+  fileName: string;
+  fileSeq?: string;
+  statusCode: number;
+  responseText?: string;
+}> {
   if (!check.uploadUrl) {
     throw new Error("파일 업로드 URL을 확인하지 못했습니다.");
   }
@@ -214,10 +347,15 @@ async function uploadAssignmentFile(
   if (response.statusCode >= 400) {
     throw new Error(`과제 첨부 업로드에 실패했습니다. HTTP ${response.statusCode}`);
   }
+  const parsed = parseAssignmentUploadResponse(response.text);
+  if (parsed.errorMessage) {
+    throw new Error(`과제 첨부 업로드에 실패했습니다: ${parsed.errorMessage}`);
+  }
 
   return {
     path: resolvedPath,
     fileName,
+    ...(parsed.fileSeq ? { fileSeq: parsed.fileSeq } : {}),
     statusCode: response.statusCode,
     ...(response.text ? { responseText: response.text.slice(0, 500) } : {})
   };
@@ -245,21 +383,24 @@ async function postSubmitCheck(
 async function postFinalSubmit(
   client: MjuLmsSsoClient,
   check: AssignmentSubmitCheckResult,
+  userId: string,
+  fileSeqs: string[],
   text: string | undefined
 ): Promise<{ statusCode: number; responseText?: string }> {
   if (!check.submitUrl) {
     throw new Error("최종 제출 URL을 확인하지 못했습니다.");
   }
 
-  const response = await client.postForm(check.submitUrl, {
-    ...(check.textFieldName ? { [check.textFieldName]: text ?? "" } : {}),
-    ...(check.submitContentSeq ? { CONTENT_SEQ: check.submitContentSeq } : {}),
-    RT_SEQ: String(check.rtSeq),
-    KJKEY: check.kjkey,
-    encoding: "utf-8"
-  });
+  const response = await client.postForm(
+    check.submitUrl,
+    buildAssignmentFinalSubmitPayload({ check, userId, text, fileSeqs })
+  );
   if (response.statusCode >= 400) {
     throw new Error(`과제 최종 제출에 실패했습니다. HTTP ${response.statusCode}`);
+  }
+  const parsed = parseAssignmentFinalSubmitResponse(response.text);
+  if (!parsed.ok) {
+    throw new Error(`과제 최종 제출에 실패했습니다: ${parsed.errorMessage}`);
   }
 
   return {
@@ -331,9 +472,18 @@ export async function submitAssignment(
   for (const filePath of uploadFiles) {
     uploadedFiles.push(await uploadAssignmentFile(client, check, filePath));
   }
+  const fileSeqs = uploadedFiles
+    .map((file) => file.fileSeq)
+    .filter((fileSeq): fileSeq is string => Boolean(fileSeq));
 
   await postSubmitCheck(client, check);
-  const submitResponse = await postFinalSubmit(client, check, text);
+  const submitResponse = await postFinalSubmit(
+    client,
+    check,
+    options.userId,
+    fileSeqs,
+    text
+  );
 
   return {
     kjkey: options.kjkey,

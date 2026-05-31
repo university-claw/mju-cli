@@ -329,6 +329,7 @@ export interface AssignmentSubmitTextArtifact {
 export interface AssignmentSubmitUploadedFile {
   path: string;
   fileName: string;
+  fileSeq?: string;
   statusCode: number;
   responseText?: string;
 }
