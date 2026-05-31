@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   buildAssignmentFinalSubmitPayload,
   buildAssignmentSubmitPlan,
+  buildAssignmentUploadMetadataPayload,
   createAssignmentTextArtifact,
   parseAssignmentFinalSubmitResponse,
   parseAssignmentSubmitContentSource,
@@ -130,6 +131,44 @@ test("buildAssignmentFinalSubmitPayload mirrors LMS report insert fields", () =>
     INPUT_METHOD_FLAG: "",
     encoding: "utf-8"
   });
+});
+
+test("buildAssignmentUploadMetadataPayload mirrors LMS plupload params", () => {
+  const payload = buildAssignmentUploadMetadataPayload({
+    check: {
+      ...baseCheck,
+      uploadPath: "K006",
+      uploadPfStFlag: "2"
+    },
+    userId: "60212158"
+  });
+
+  assert.deepEqual(payload, {
+    path: "K006",
+    ud: "60212158",
+    ky: "KJKEY",
+    returnData: "json",
+    pf_st_flag: "2",
+    encoding: "utf-8"
+  });
+});
+
+test("buildAssignmentSubmitPlan can represent body text without creating a text artifact", () => {
+  const plan = buildAssignmentSubmitPlan({
+    check: {
+      ...baseCheck,
+      uploadUrl: "https://lms.mju.ac.kr/ilos/co/efile_upload_multiple2.acl"
+    },
+    contentSource: "user-file",
+    localFiles: ["/tmp/discord.c"],
+    willSubmitText: true,
+    dryRun: false
+  });
+
+  assert.equal(plan.canSubmit, true);
+  assert.equal(plan.willUploadFiles, true);
+  assert.equal(plan.willSubmitText, true);
+  assert.equal(plan.textArtifact, undefined);
 });
 
 test("parseAssignmentFinalSubmitResponse rejects LMS error payloads", () => {
