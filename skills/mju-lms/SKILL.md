@@ -53,7 +53,8 @@ metadata:
 4. 사용자 문장에서 과목명 후보와 과제명 후보를 분리해 `courseTitle`, `title`, `rtSeq`, `kjkey`와 매칭합니다.
 5. 대상이 하나로 확정되면 `--course`보다 `--kjkey`를 우선 사용합니다.
 6. 제출 전 점검을 실행합니다: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms assignments check-submission --kjkey KJKEY --rt-seq RT_SEQ --local-files /path/to/file`
-7. 점검이 통과하면 제출합니다: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms assignments submit --kjkey KJKEY --rt-seq RT_SEQ --local-files /path/to/file --content-source user-file`
+7. 점검 결과 `requiresTextInput: true`인데 사용자가 별도 본문을 주지 않았고 첨부파일 제출이 목적이면 기본 본문 `.`를 `--text`로 함께 전달합니다.
+8. 점검이 통과하면 제출합니다: `mju --app-dir /data/users/<DISCORD_USER_ID> --format json lms assignments submit --kjkey KJKEY --rt-seq RT_SEQ --local-files /path/to/file --text "." --content-source user-file`
 
 접근 권한, 강의실 진입 실패, 과목 없음 오류가 나오면 바로 사용자에게 직접 확인하라고 답하지 않습니다. 먼저 아래 순서로 복구 점검을 실행합니다.
 
