@@ -21,3 +21,4 @@
 | [recipe-mju-check-today](../skills/recipe-mju-check-today/SKILL.md) | 오늘 처리할 LMS 액션과 도서관 예약 상황을 함께 확인하는 daily recipe. |
 | [recipe-mju-seat-reserve](../skills/recipe-mju-seat-reserve/SKILL.md) | 열람실 좌석을 preview 후 예약하고 검증까지 마무리하는 recipe. |
 | [recipe-mju-study-day-digest](../skills/recipe-mju-study-day-digest/SKILL.md) | LMS digest와 도서관 좌석 흐름을 묶어 학습 준비를 한 번에 점검하는 recipe. |
+
