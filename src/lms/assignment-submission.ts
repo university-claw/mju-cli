@@ -168,6 +168,25 @@ export function parseAssignmentFinalSubmitResponse(
   return { ok: true };
 }
 
+export function buildAssignmentUploadMetadataPayload(options: {
+  check: AssignmentSubmitCheckResult;
+  userId: string;
+}): Record<string, FormPayloadValue> {
+  return {
+    ...(options.check.uploadPath ? { path: options.check.uploadPath } : {}),
+    ud: options.userId,
+    ky: options.check.kjkey,
+    returnData: "json",
+    ...(options.check.uploadPfStFlag
+      ? { pf_st_flag: options.check.uploadPfStFlag }
+      : {}),
+    ...(options.check.submitContentSeq
+      ? { CONTENT_SEQ: options.check.submitContentSeq }
+      : {}),
+    encoding: "utf-8"
+  };
+}
+
 export function parseAssignmentSubmitContentSource(
   value: string | undefined,
   context: { hasText: boolean; hasLocalFiles: boolean }
@@ -254,6 +273,7 @@ export function buildAssignmentSubmitPlan(options: {
   contentSource: AssignmentSubmitContentSource;
   localFiles: string[];
   textArtifact?: AssignmentSubmitTextArtifact;
+  willSubmitText?: boolean;
   dryRun?: boolean;
 }): AssignmentSubmitPlan {
   const blockingReasons = [...options.check.blockingReasons];
@@ -304,7 +324,9 @@ export function buildAssignmentSubmitPlan(options: {
     ...(options.textArtifact ? { textArtifact: options.textArtifact } : {}),
     localFiles: options.localFiles,
     willUploadFiles: hasNewFiles,
-    willSubmitText: hasTextArtifact || options.check.usedExistingTextFallback,
+    willSubmitText:
+      options.willSubmitText ??
+      (hasTextArtifact || options.check.usedExistingTextFallback),
     submissionMode: options.check.submissionMode,
     dryRun: options.dryRun ?? false
   };
@@ -313,6 +335,7 @@ export function buildAssignmentSubmitPlan(options: {
 async function uploadAssignmentFile(
   client: MjuLmsSsoClient,
   check: AssignmentSubmitCheckResult,
+  userId: string,
   filePath: string
 ): Promise<{
   path: string;
@@ -332,16 +355,11 @@ async function uploadAssignmentFile(
   new Uint8Array(arrayBuffer).set(buffer);
   const form = new FormData();
   form.append("file", new Blob([arrayBuffer]), fileName);
-  if (check.uploadPath) {
-    form.append("path", check.uploadPath);
+  for (const [key, value] of Object.entries(
+    buildAssignmentUploadMetadataPayload({ check, userId })
+  )) {
+    form.append(key, String(value));
   }
-  if (check.uploadPfStFlag) {
-    form.append("pf_st_flag", check.uploadPfStFlag);
-  }
-  if (check.submitContentSeq) {
-    form.append("CONTENT_SEQ", check.submitContentSeq);
-  }
-  form.append("encoding", "utf-8");
 
   const response = await client.postMultipart(check.uploadUrl, form);
   if (response.statusCode >= 400) {
@@ -351,11 +369,16 @@ async function uploadAssignmentFile(
   if (parsed.errorMessage) {
     throw new Error(`과제 첨부 업로드에 실패했습니다: ${parsed.errorMessage}`);
   }
+  if (!parsed.fileSeq) {
+    throw new Error(
+      `${fileName}: LMS 파일 업로드 응답에서 첨부 식별자(seq1)를 확인하지 못해 제출을 중단했습니다.`
+    );
+  }
 
   return {
     path: resolvedPath,
     fileName,
-    ...(parsed.fileSeq ? { fileSeq: parsed.fileSeq } : {}),
+    fileSeq: parsed.fileSeq,
     statusCode: response.statusCode,
     ...(response.text ? { responseText: response.text.slice(0, 500) } : {})
   };
@@ -428,7 +451,8 @@ export async function submitAssignment(
     ...(text ? { text } : {}),
     localFiles
   });
-  const textArtifact = text
+  const shouldCreateTextArtifact = text !== undefined && contentSource !== "user-file";
+  const textArtifact = shouldCreateTextArtifact
     ? await createAssignmentTextArtifact({
         title: check.title,
         text,
@@ -445,6 +469,7 @@ export async function submitAssignment(
     contentSource,
     localFiles: uploadFiles,
     ...(textArtifact ? { textArtifact } : {}),
+    willSubmitText: text !== undefined || check.usedExistingTextFallback,
     dryRun: options.dryRun ?? false
   });
 
@@ -470,7 +495,7 @@ export async function submitAssignment(
 
   const uploadedFiles = [];
   for (const filePath of uploadFiles) {
-    uploadedFiles.push(await uploadAssignmentFile(client, check, filePath));
+    uploadedFiles.push(await uploadAssignmentFile(client, check, options.userId, filePath));
   }
   const fileSeqs = uploadedFiles
     .map((file) => file.fileSeq)
